@@ -33,7 +33,11 @@ const config = {
 					strict: false
 				})
 			: adapterNode(),
-		paths: { base }
+		// Absolute asset/link paths (not relative). The static site deploys at the root
+		// of its (sub)domain, so relative paths broke assets on sub-pages — e.g. the
+		// licensed font's `./fonts/fonts.css` resolved to `/explore/fonts/…` → 404.
+		// `base` still prefixes everything, so a sub-path deploy stays correct.
+		paths: { base, relative: false }
 	}
 };
 
