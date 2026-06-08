@@ -355,6 +355,23 @@ export function submissionTypeBreakdown(o: FlairOpts = {}) {
 		.all(...w.params) as { type: string; count: number }[];
 }
 
+/**
+ * Submission-type composition (video / text / link) per time bucket — the media
+ * mix over time, notably video's rise. Same is_video/is_self scheme as
+ * submissionTypeBreakdown; 'link' is predominantly image posts (external links).
+ */
+export function submissionTypeOverTime(o: BaseOpts & { granularity?: string } = {}) {
+	const period = bucketStartSql(o.granularity ?? 'day');
+	const w = buildWhere(dateFilter(o.startDate, o.endDate));
+	return sqlite
+		.prepare(
+			`SELECT ${period} AS period, ` +
+				`CASE WHEN is_video = 1 THEN 'video' WHEN is_self = 1 THEN 'text' ELSE 'link' END AS type, ` +
+				`COUNT(*) AS count FROM submissions ${w.sql} GROUP BY period, type ORDER BY period, type`
+		)
+		.all(...w.params) as { period: string; type: string; count: number }[];
+}
+
 export function coverageCalendar(subreddit?: string) {
 	const w = buildWhere(subredditFilter(subreddit));
 	return sqlite

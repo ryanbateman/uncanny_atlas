@@ -17,6 +17,7 @@ export const load: PageServerLoad = ({ setHeaders }) => {
 		submissionsOverTime: q.submissionsOverTimeBySubreddit({ granularity: 'day' }),
 		commentsOverTime: q.commentsOverTimeBySubreddit({ granularity: 'day' }),
 		types: q.submissionTypeBreakdown({}),
+		typesOverTime: q.submissionTypeOverTime({ granularity: 'day' }),
 		markers: q.timelineMarkers(),
 		firstComment: q.firstCommentDate(),
 		firstSubmission: q.firstSubmissionDate(),

@@ -22,8 +22,11 @@
 	// day-level series; mode switches line vs stacked area.
 	let subGran = $state('week');
 	let comGran = $state('week');
+	let typeGran = $state('week');
 	let subMode = $state<SeriesMode>('stacked');
 	let comMode = $state<SeriesMode>('stacked');
+	// Defaults to 100% stacked: the point of this chart is the composition shift.
+	let typeMode = $state<SeriesMode>('percent');
 
 	const toDate = (iso: string) => new Date(iso + 'T00:00:00Z');
 
@@ -79,6 +82,24 @@
 
 	const subData = $derived(series(data.submissionsOverTime, subGran));
 	const comData = $derived(series(data.commentsOverTime, comGran));
+
+	// Submission-type series: same densify as `series`, keyed by type instead of
+	// subreddit. Types come from the data (link / text / video), stably sorted.
+	const types = $derived([...new Set(data.typesOverTime.map((r) => r.type))].sort());
+	const typeColor = $derived({ domain: types, range: SET2.slice(0, types.length), legend: false });
+	function typeSeries(dayRows: { period: string; type: string; count: number }[], gran: string) {
+		const agg = new Map<string, number>();
+		for (const r of dayRows) {
+			const k = bucketStart(toDate(r.period), gran) + '|' + r.type;
+			agg.set(k, (agg.get(k) ?? 0) + r.count);
+		}
+		const dense: { period: string; date: Date; type: string; count: number }[] = [];
+		for (const p of bucketList(gran))
+			for (const t of types)
+				dense.push({ period: p, date: toDate(p), type: t, count: agg.get(p + '|' + t) ?? 0 });
+		return dense;
+	}
+	const typeData = $derived(typeSeries(data.typesOverTime, typeGran));
 	// UTC domain for the x-scale, and event markers placed at their exact date.
 	const xDomain = $derived(
 		data.domain ? [toDate(data.domain.min), toDate(data.domain.max)] : undefined
@@ -191,6 +212,51 @@
 	<div class="chart-legend center">
 		{#each subs as s, i (s)}
 			<span><span class="swatch" style="background:{SET2[i % SET2.length]}"></span>{s}</span>
+		{/each}
+	</div>
+</Figure>
+
+<Figure
+	title="Submission type over time"
+	hint="Each type's share of submissions per time bucket (100% stacked). 'Link' is predominantly image posts (external links), 'video' is Reddit-hosted video, 'text' is a self-post. Switch to stacked area or line for absolute counts."
+	caption="Submission types per time bucket. The rising share of video is the corpus-composition shift that can confound indicator trends (e.g. motion/video tells tracking the medium, not detection). Dotted red lines mark notable AI releases."
+>
+	{#snippet controls()}
+		<select bind:value={typeGran} class="chart-mode" aria-label="Granularity">
+			<option value="day">Day</option>
+			<option value="week">Week</option>
+			<option value="month">Month</option>
+		</select>
+		<select bind:value={typeMode} class="chart-mode" aria-label="Chart mode">
+			<option value="line">Line</option>
+			<option value="stacked">Stacked area</option>
+			<option value="percent">100% stacked</option>
+		</select>
+	{/snippet}
+	<Plot
+		render={(P, { width }) =>
+			P.plot({
+				width,
+				style: CHART_STYLE,
+				height: 460,
+				marginLeft: 55,
+				marginBottom: 34,
+				marginTop: 100,
+				x: { type: 'utc', domain: xDomain, label: null, axis: null },
+				y: seriesY(typeMode, 'submissions'),
+				color: typeColor,
+				marks: [
+					...timeGrid(P, typeGran),
+					seriesMark(P, typeData, { x: 'date', y: 'count', series: 'type', mode: typeMode }),
+					...spines(P),
+					...timeTicks(P, typeGran),
+					...eventMarks(P, markerData)
+				]
+			})}
+	/>
+	<div class="chart-legend center">
+		{#each types as t, i (t)}
+			<span><span class="swatch" style="background:{SET2[i % SET2.length]}"></span>{t}</span>
 		{/each}
 	</div>
 </Figure>
