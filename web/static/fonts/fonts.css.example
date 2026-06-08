@@ -1,0 +1,40 @@
+/* TEMPLATE for the licensed display font (committed; the real fonts.css and the
+   font files are gitignored).
+ *
+ * The app's heading face is "Captain Edward" by SimpleBits
+ * (https://simplebits.shop/collections/fonts) — a licensed font that is NOT
+ * redistributed with this repository.
+ *
+ * To enable it locally or on a deployment:
+ *   1. Buy/download Captain Edward.
+ *   2. Drop the web fonts into this directory (web/static/fonts/):
+ *        CaptainEdward-Regular.woff2  CaptainEdward-Regular.woff
+ *        CaptainEdward-Bold.woff2     CaptainEdward-Bold.woff
+ *   3. Copy this file to `fonts.css` (same dir).
+ *
+ * Without it, app.html's font <link> 404s harmlessly and --font-display falls back
+ * to the serif stack in app.css — the app still looks correct, just with a system
+ * serif for headings.
+ *
+ * NOTE: the url()s below are RELATIVE (no leading slash) so they resolve correctly
+ * whether the site is served at the domain root or under a sub-path (e.g. /atlas).
+ * If you maintain your own fonts.css, keep the urls relative too.
+ */
+@font-face {
+	font-family: 'Captain Edward';
+	src:
+		url('CaptainEdward-Regular.woff2') format('woff2'),
+		url('CaptainEdward-Regular.woff') format('woff');
+	font-weight: 400;
+	font-style: normal;
+	font-display: swap;
+}
+@font-face {
+	font-family: 'Captain Edward';
+	src:
+		url('CaptainEdward-Bold.woff2') format('woff2'),
+		url('CaptainEdward-Bold.woff') format('woff');
+	font-weight: 700;
+	font-style: normal;
+	font-display: swap;
+}

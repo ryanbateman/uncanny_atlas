@@ -1,0 +1,676 @@
+:root {
+	/* ---- Palette — "Atlas paper" (warm editorial) ----------------------- */
+	--bg: #f7f2e9;
+	--surface: #fffdf8;
+	--surface-2: #efe7d6;
+	--border: #e4dac6;
+	--text: #262019;
+	--muted: #6f675a;
+	--accent: #1f6f68;
+	--accent-dim: #d8e8e5;
+
+	/* Semantic states, warmed to sit on the paper base. The -bg/-text/-border
+	   tints back the flash banners and the danger button. */
+	--good: #2f7d55;
+	--good-bg: #e7f0e4;
+	--good-text: #1f6a45;
+	--warn: #b07d1a;
+	--warn-bg: #f7ecd5;
+	--warn-text: #7d5512;
+	--danger: #a23b2c;
+	--danger-bg: #f4e0db;
+	--danger-text: #8f3325;
+	--danger-border: #e3c3bb;
+
+	/* ---- Typography ----------------------------------------------------- */
+	/* --font-display is the licensed Simplebits face on the live site; until the
+	   owner supplies that file, the geometric stand-in stack below renders. */
+	--font-display: 'Captain Edward', 'Iowan Old Style', Georgia, 'Times New Roman', serif;
+	--font-sans: 'Inter Variable', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+	--font-mono: ui-monospace, 'SF Mono', 'Cascadia Code', Consolas, monospace;
+
+	/* Type scale (px, to match the existing px-based layout) */
+	--text-2xs: 11px;
+	--text-xs: 12px;
+	--text-sm: 13px;
+	--text-base: 14px;
+	--text-md: 16px;
+	--text-lg: 18px;
+	--text-xl: 22px;
+	--text-2xl: 28px;
+	--text-3xl: 34px;
+
+	/* ---- Spacing & shape ------------------------------------------------ */
+	--space-1: 4px;
+	--space-2: 8px;
+	--space-3: 12px;
+	--space-4: 16px;
+	--space-5: 24px;
+	--space-6: 32px;
+	--space-7: 48px;
+	--radius: 10px;
+	--radius-sm: 7px;
+	--shadow: 0 1px 2px rgba(20, 24, 31, 0.04), 0 1px 3px rgba(20, 24, 31, 0.06);
+
+	/* ---- Layout --------------------------------------------------------- */
+	--reader-width: 720px;
+	--content-max: 1200px;
+	--sidebar-width: 220px;
+
+	font-family: var(--font-sans);
+}
+
+* {
+	box-sizing: border-box;
+}
+
+html,
+body {
+	margin: 0;
+	background: var(--bg);
+	color: var(--text);
+	font-size: var(--text-base);
+	line-height: 1.5;
+}
+
+a {
+	color: var(--accent);
+	/* Canonical link: a teal dotted underline that goes solid on hover. Structural
+	   links (nav, buttons, pager, footer) opt out in the rule below. */
+	text-decoration: underline dotted var(--accent);
+	text-underline-offset: 0.18em;
+}
+a:hover {
+	text-decoration-style: solid;
+}
+.nav-group a,
+.cta-btn,
+.table-foot a,
+.site-footer a {
+	text-decoration: none;
+}
+
+.app {
+	display: grid;
+	grid-template-columns: var(--sidebar-width) 1fr;
+	min-height: 100vh;
+}
+
+.sidebar {
+	background: var(--surface);
+	border-right: 1px solid var(--border);
+	/* a little extra room on the right so nav items don't crowd the divider */
+	padding: 20px var(--space-5) 20px var(--space-4);
+	position: sticky;
+	top: 0;
+	height: 100vh;
+	overflow-y: auto;
+	/* flex column so the author credit can sit at the bottom (margin-top: auto) */
+	display: flex;
+	flex-direction: column;
+}
+.sidebar h1 {
+	font-family: var(--font-display);
+	/* Stacked wordmark ("Uncanny" / "Atlas"): large, but sized to leave a clear gap
+	   to the sidebar's right padding rather than butting against it. */
+	font-size: 40px;
+	font-weight: 700;
+	letter-spacing: -0.02em;
+	line-height: 0.92;
+	margin: 0 0 6px;
+}
+.sidebar .tagline {
+	color: var(--muted);
+	font-size: var(--text-xs);
+	margin-bottom: 20px;
+}
+.nav-group {
+	margin-bottom: 18px;
+}
+.nav-group > .label {
+	text-transform: uppercase;
+	font-size: var(--text-2xs);
+	letter-spacing: 0.08em;
+	color: var(--muted);
+	margin-bottom: 6px;
+}
+.nav-group a {
+	display: block;
+	padding: 6px 10px;
+	border-radius: var(--radius-sm);
+	color: var(--text);
+	margin-bottom: 2px;
+}
+.nav-group a:hover {
+	background: var(--surface-2);
+	text-decoration: none;
+}
+.nav-group a.active {
+	background: var(--accent-dim);
+	color: var(--accent);
+	font-weight: 600;
+}
+/* Disabled nav item (read-only public site): visible but inert, with a tooltip. */
+.nav-group a.disabled {
+	color: var(--muted);
+	opacity: 0.55;
+	cursor: default;
+}
+.nav-group a.disabled:hover {
+	background: transparent;
+	text-decoration: none;
+}
+
+/* Sidebar body holds everything under the wordmark; flex column so the author
+   credit (margin-top:auto) sits at the bottom. On mobile it becomes the drawer. */
+.sidebar-body {
+	display: flex;
+	flex-direction: column;
+	flex: 1 1 auto;
+	min-height: 0;
+}
+/* Hamburger button — hidden on desktop, shown in the mobile top bar. */
+.nav-toggle {
+	display: none;
+	flex-direction: column;
+	justify-content: center;
+	gap: 5px;
+	width: 40px;
+	height: 40px;
+	padding: 9px;
+	background: none;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	cursor: pointer;
+	flex: none;
+}
+.nav-toggle span {
+	display: block;
+	width: 100%;
+	height: 2px;
+	background: var(--text);
+	border-radius: 2px;
+	transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+/* ---- Mobile: collapse the sidebar into a sticky top bar + drawer ---------- */
+@media (max-width: 820px) {
+	.app {
+		grid-template-columns: 1fr;
+	}
+	.sidebar {
+		position: sticky;
+		top: 0;
+		height: auto;
+		z-index: 30;
+		overflow: visible;
+		border-right: none;
+		border-bottom: 1px solid var(--border);
+		padding: 10px var(--space-4);
+	}
+	.sidebar-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--space-3);
+	}
+	.sidebar h1 {
+		font-size: 20px;
+		line-height: 0.95;
+		margin: 0;
+	}
+	.nav-toggle {
+		display: flex;
+	}
+	.sidebar-body {
+		display: none;
+	}
+	.sidebar.nav-open .sidebar-body {
+		display: flex;
+		margin-top: var(--space-4);
+	}
+	.sidebar.nav-open .nav-toggle span:nth-child(1) {
+		transform: translateY(7px) rotate(45deg);
+	}
+	.sidebar.nav-open .nav-toggle span:nth-child(2) {
+		opacity: 0;
+	}
+	.sidebar.nav-open .nav-toggle span:nth-child(3) {
+		transform: translateY(-7px) rotate(-45deg);
+	}
+	main {
+		padding: var(--space-5) var(--space-4);
+	}
+	/* Chart headers: stack the dropdown controls below the title so they don't
+	   compete with it for the narrow horizontal space. */
+	.figure-head {
+		flex-direction: column;
+		align-items: flex-start;
+		gap: var(--space-2);
+	}
+	.figure-controls {
+		flex-wrap: wrap;
+	}
+}
+
+main {
+	padding: 28px var(--space-6);
+	max-width: var(--content-max);
+	/* Let the 1fr grid column shrink below its content's min-content width so wide
+	   children (tables, charts) scroll within main instead of widening the page. */
+	min-width: 0;
+}
+h1 {
+	font-family: var(--font-display);
+	font-weight: 700;
+	letter-spacing: -0.01em;
+}
+h2 {
+	margin-top: 0;
+	font-family: var(--font-display);
+	font-size: var(--text-xl);
+	font-weight: 700;
+	letter-spacing: -0.01em;
+}
+h3 {
+	font-size: 15px;
+	color: var(--muted);
+	font-weight: 600;
+	margin: 28px 0 10px;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+.page-desc {
+	color: var(--muted);
+	margin: -6px 0 20px;
+	max-width: 70ch;
+}
+
+.cards {
+	display: grid;
+	/* auto-fit (not auto-fill) so empty trailing tracks collapse and the cards
+	   stretch to fill the full column width as a group rather than bunching left. */
+	grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+	gap: var(--space-3);
+	margin-bottom: var(--space-2);
+}
+.card {
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	padding: 14px var(--space-4);
+}
+.card .value {
+	font-size: 24px;
+	font-weight: 700;
+}
+.card .label {
+	color: var(--muted);
+	font-size: var(--text-xs);
+}
+
+.panel {
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	padding: var(--space-4);
+	margin-bottom: var(--space-4);
+	overflow-x: auto;
+}
+
+/* Standard wrapper for a chart presented as content (see Figure.svelte): a
+   bordered card with the title + optional mode toggle in the header, the chart,
+   and an optional caption. The figure-title overrides the global uppercase h3. */
+.figure {
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	padding: var(--space-4);
+	/* Reset the <figure> element's user-agent margin (1em / 40px) so the chart
+	   cards align flush with the full-width stat cards and panels. */
+	margin: 0 0 var(--space-4);
+	box-shadow: var(--shadow);
+	overflow-x: auto;
+}
+.figure-head {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: var(--space-3);
+	margin-bottom: var(--space-3);
+}
+.figure-title {
+	margin: 0;
+	font-family: var(--font-sans);
+	font-size: var(--text-md);
+	font-weight: 600;
+	color: var(--text);
+	text-transform: none;
+	letter-spacing: 0;
+}
+.figure-controls {
+	display: flex;
+	gap: var(--space-2);
+	align-items: center;
+	flex: none;
+}
+/* In-header checkbox toggle (e.g. "Show noise"), sized to match .chart-mode. */
+.chart-toggle {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-1);
+	font-size: var(--text-xs);
+	color: var(--muted);
+	white-space: nowrap;
+}
+.chart-toggle input {
+	accent-color: var(--accent);
+	margin: 0;
+}
+.figure figcaption {
+	margin-top: var(--space-3);
+	font-size: var(--text-xs);
+	color: var(--muted);
+	line-height: 1.5;
+}
+
+table {
+	border-collapse: collapse;
+	width: 100%;
+	font-size: var(--text-sm);
+}
+th,
+td {
+	text-align: left;
+	padding: 7px 10px;
+	border-bottom: 1px solid var(--border);
+	vertical-align: top;
+}
+th {
+	color: var(--muted);
+	font-weight: 600;
+	white-space: nowrap;
+}
+tr:last-child td {
+	border-bottom: none;
+}
+.num {
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+}
+.truncate {
+	max-width: 480px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.filter-bar {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 10px;
+	align-items: end;
+	margin-bottom: var(--space-4);
+}
+.filter-bar label {
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+	font-size: var(--text-xs);
+	color: var(--muted);
+}
+/* Inline checkbox option (e.g. "De-dupe by post"), aligned with the selects. */
+.filter-bar label.check {
+	flex-direction: row;
+	align-items: center;
+	gap: 6px;
+	color: var(--text);
+	white-space: nowrap;
+	padding-bottom: 7px;
+}
+.filter-bar label.check input {
+	accent-color: var(--accent);
+	margin: 0;
+}
+
+select,
+input[type='text'],
+input[type='search'] {
+	background: var(--surface-2);
+	color: var(--text);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	padding: 6px var(--space-2);
+	font-size: var(--text-sm);
+}
+button {
+	background: var(--accent);
+	color: #fff;
+	border: 1px solid var(--accent);
+	border-radius: var(--radius-sm);
+	padding: 6px var(--space-3);
+	font-size: var(--text-sm);
+	cursor: pointer;
+}
+button:hover {
+	filter: brightness(0.95);
+}
+button.danger {
+	background: var(--danger-bg);
+	color: var(--danger-text);
+	border-color: var(--danger-border);
+}
+button.ghost {
+	background: transparent;
+	color: var(--text);
+	border-color: var(--border);
+}
+button.ghost:hover {
+	background: var(--surface-2);
+	filter: none;
+}
+
+.pill {
+	display: inline-block;
+	padding: 1px var(--space-2);
+	border-radius: 999px;
+	font-size: var(--text-2xs);
+	background: var(--surface-2);
+	border: 1px solid var(--border);
+	color: var(--muted);
+}
+
+/* Merge-group badges: surface Explore-side canonical grouping (Categorise table,
+   Explore Top-indicators table + legend, Inspect header). */
+.merge-badge {
+	display: inline-block;
+	padding: 0 6px;
+	border-radius: 999px;
+	font-size: var(--text-2xs);
+	background: var(--surface-2);
+	color: var(--muted);
+	white-space: nowrap;
+	vertical-align: middle;
+}
+.merge-badge.canon {
+	background: var(--accent-dim);
+	color: var(--accent);
+}
+.merge-none {
+	color: var(--muted);
+}
+
+.flash {
+	padding: var(--space-2) var(--space-3);
+	border-radius: var(--radius-sm);
+	margin-bottom: 14px;
+	border: 1px solid var(--border);
+}
+.flash.success {
+	background: var(--good-bg);
+	border-color: var(--good);
+	color: var(--good-text);
+}
+.flash.nudge {
+	background: var(--warn-bg);
+	border-color: var(--warn);
+	color: var(--warn-text);
+}
+
+/* Data-table card: filters/toggles, the (scrollable) table, an empty state, and a
+   pagination footer — all inside one bordered box. See e.g. the Categorise page. */
+.table-card {
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	padding: var(--space-4);
+	margin-bottom: var(--space-4);
+	box-shadow: var(--shadow);
+}
+/* The filter bar, when it lives inside a table-card, gets a divider below it. */
+.table-card .table-controls {
+	margin-bottom: var(--space-3);
+	padding-bottom: var(--space-3);
+	border-bottom: 1px solid var(--border);
+}
+.table-scroll {
+	overflow-x: auto;
+}
+.table-empty {
+	padding: var(--space-6) var(--space-4);
+	text-align: center;
+	color: var(--muted);
+	font-size: var(--text-sm);
+}
+.table-foot {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	gap: var(--space-3);
+	margin-top: var(--space-3);
+	padding-top: var(--space-3);
+	border-top: 1px solid var(--border);
+	color: var(--muted);
+	font-size: var(--text-xs);
+}
+.table-foot .pager {
+	display: flex;
+	gap: var(--space-4);
+}
+.table-foot a {
+	color: var(--text);
+}
+.table-foot a:hover {
+	color: var(--accent);
+}
+
+.hint {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 15px;
+	height: 15px;
+	padding: 0;
+	margin-left: 5px;
+	border-radius: 50%;
+	border: 1px solid var(--border);
+	background: transparent;
+	color: var(--muted);
+	font-family: inherit;
+	font-size: 10px;
+	font-weight: 700;
+	font-style: italic;
+	line-height: 1;
+	cursor: help;
+	vertical-align: middle;
+	user-select: none;
+	flex: none;
+}
+.hint:hover,
+.hint:focus-visible {
+	color: var(--accent);
+	border-color: var(--accent);
+	outline: none;
+}
+h3 .hint {
+	text-transform: none;
+}
+
+.chart {
+	min-height: 40px;
+}
+
+.pill-list {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-1);
+}
+
+.section-head {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: var(--space-3);
+}
+.chart-mode {
+	width: auto;
+	font-size: var(--text-xs);
+	padding: 3px var(--space-2);
+}
+
+.stop-list summary {
+	cursor: pointer;
+	color: var(--muted);
+}
+.stop-list summary strong {
+	color: var(--text);
+}
+.chart svg {
+	max-width: 100%;
+	height: auto;
+}
+/* Observable Plot wraps charts that have a built-in legend in a <figure>, which
+   carries the UA 1em/40px margin — reset it so the chart fills its card. */
+.chart figure {
+	margin: 0;
+	max-width: 100%;
+}
+
+/* Custom clickable chart legend (replaces Plot's static swatch legend). */
+.chart-legend {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-1) 14px;
+	margin-bottom: 10px;
+	font-size: var(--text-xs);
+	line-height: 1.4;
+}
+.chart-legend a {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	color: var(--text);
+}
+.chart-legend a:hover {
+	color: var(--accent);
+	text-decoration: underline;
+}
+.chart-legend .swatch {
+	width: 11px;
+	height: 11px;
+	border-radius: 2px;
+	flex: none;
+}
+/* Non-clickable legend items (e.g. the subreddit legend below a chart). */
+.chart-legend > span {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	color: var(--text);
+}
+/* Centred legend, sat below the chart it labels. */
+.chart-legend.center {
+	justify-content: center;
+	margin-top: 10px;
+	margin-bottom: 0;
+}

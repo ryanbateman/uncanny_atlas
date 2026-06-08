@@ -1,0 +1,8 @@
+[server]
+runOnSave = true
+
+[theme]
+primaryColor = "#FF4500"
+
+[browser]
+gatherUsageStats = false

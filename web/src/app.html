@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta name="text-scale" content="scale" />
+		<!-- Licensed display font (Captain Edward). The CSS + font files live in the
+		     gitignored web/static/fonts/ and load only locally / on the live site;
+		     in the open-source build this 404s harmlessly and --font-display falls
+		     back to the serif stack in app.css. %sveltekit.assets% makes the path
+		     base-aware so it resolves under a sub-path deploy (e.g. /atlas). -->
+		<link rel="stylesheet" href="%sveltekit.assets%/fonts/fonts.css" />
+
+		<meta name="description" content="The visual 'tells' people actually use to spot AI-generated images, mined from r/isthisAI and r/RealOrAI." />
+		<meta name="theme-color" content="#1f6f68" />
+
+		<!-- Favicons: the ornamental cross (plus.ss01) from Captain Edward. Base-aware via
+		     %sveltekit.assets% so they resolve under a sub-path deploy too. -->
+		<link rel="icon" href="%sveltekit.assets%/favicon.ico" sizes="any" />
+		<link rel="icon" type="image/png" href="%sveltekit.assets%/favicon.png" />
+		<link rel="apple-touch-icon" href="%sveltekit.assets%/apple-touch-icon.png" />
+
+		<!-- Open Graph / Twitter (Slack, Bluesky, Discord, …). Absolute URLs — link
+		     scrapers don't resolve relative paths. -->
+		<meta property="og:type" content="website" />
+		<meta property="og:site_name" content="Uncanny Atlas" />
+		<meta property="og:title" content="Uncanny Atlas" />
+		<meta property="og:description" content="The visual 'tells' people actually use to spot AI-generated images, mined from r/isthisAI and r/RealOrAI." />
+		<meta property="og:url" content="https://atlas.boat.horse/" />
+		<meta property="og:image" content="https://atlas.boat.horse/og.png" />
+		<meta property="og:image:type" content="image/png" />
+		<meta property="og:image:width" content="1200" />
+		<meta property="og:image:height" content="630" />
+		<meta property="og:image:alt" content="Uncanny Atlas — the visual tells people use to spot AI-generated images" />
+		<meta name="twitter:card" content="summary_large_image" />
+		<meta name="twitter:title" content="Uncanny Atlas" />
+		<meta name="twitter:description" content="The visual 'tells' people actually use to spot AI-generated images, mined from r/isthisAI and r/RealOrAI." />
+		<meta name="twitter:image" content="https://atlas.boat.horse/og.png" />
+
+		%sveltekit.head%
+	</head>
+	<body data-sveltekit-preload-data="hover">
+		<div style="display: contents">%sveltekit.body%</div>
+	</body>
+</html>

@@ -1,0 +1,25 @@
+# Keep the build context code-only — never ship data, secrets, or local junk.
+.git
+.gitignore
+data
+**/*.db
+**/*.db-wal
+**/*.db-shm
+**/*.bak-*
+**/*.jsonl
+node_modules
+web/node_modules
+web/.svelte-kit
+web/build
+web/build-static
+.venv
+__pycache__
+**/*.pyc
+.env
+*.log
+.claude
+.opencode
+_rebuild.py
+# Licensed fonts are local-only.
+web/static/fonts/*
+!web/static/fonts/fonts.css.example

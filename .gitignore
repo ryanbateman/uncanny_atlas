@@ -1,0 +1,29 @@
+# Data: nothing in data/ is committed — no DB, exports (.jsonl/.csv), or backups.
+# The database is built by the pipeline / provisioned privately for the live site.
+data/*
+!data/.gitkeep
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+.venv/
+
+# Secrets / logs
+.env
+*.log
+
+# Local tooling / scratch (not part of the project)
+.claude/
+.opencode/
+_rebuild*
+.venv-win/
+# Personal deploy helper (hardcodes the Pi host + local Node path).
+deploy.sh
+
+# Licensed fonts — never commit the font files or the live fonts.css.
+# The committed fonts.css.example documents how to enable them locally.
+web/static/fonts/*
+!web/static/fonts/fonts.css.example
