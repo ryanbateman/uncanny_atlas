@@ -592,9 +592,24 @@ def build_taxonomy(
     model: str = OLLAMA_MODEL,
     base_url: str = OLLAMA_BASE_URL,
 ) -> None:
+    # Rank candidates on LLM-discovery rows ONLY. Semantic expansion writes the
+    # seed phrase itself as `indicator`, so without this filter an established
+    # seed's own expansion rows inflate its rank by orders of magnitude — seed
+    # selection would feed on its own output. (LLM batches are uuid4[:8]; the
+    # derived rows are batch_id 'semantic_*' / 'keyword_expansion_*'.)
+    #
+    # Also exclude curator-rejected phrases: the Curate UI records "this is not a
+    # real cue" by DELETING the taxonomy row and stamping the phrase's comment
+    # rows category='Noise' — so a Noise phrase has no taxonomy row for OR IGNORE
+    # to protect, and without this clause a re-run would resurrect it as a seed
+    # (verdict phrases are by construction the most frequent strings here).
     indicators = conn.execute(
         "SELECT indicator, COUNT(*) as c FROM comment_indicators "
         "WHERE LENGTH(indicator) > 2 "
+        "AND batch_id NOT LIKE 'semantic_%' AND batch_id NOT LIKE 'keyword_%' "
+        "AND indicator NOT IN ("
+        "  SELECT DISTINCT indicator FROM comment_indicators WHERE category = 'Noise'"
+        ") "
         "GROUP BY indicator ORDER BY c DESC LIMIT 200"
     ).fetchall()
     if not indicators:
@@ -640,8 +655,14 @@ def build_taxonomy(
             pattern = re.sub(r"\s*\(\d+x\)\s*$", "", pattern).strip()
             if not pattern or not category or is_stop_indicator(pattern):
                 continue
+            # OR IGNORE, not OR REPLACE: existing taxonomy rows are curated state
+            # (recategorisations, merges' category writes). A re-run must only ADD
+            # new patterns — never recategorise what a curator decided. (Curator
+            # REJECTIONS are protected separately: the ranking query above excludes
+            # phrases whose rows carry category='Noise', because rejection deletes
+            # the taxonomy row and there is nothing here for OR IGNORE to keep.)
             conn.execute(
-                "INSERT OR REPLACE INTO indicator_taxonomy "
+                "INSERT OR IGNORE INTO indicator_taxonomy "
                 "(indicator_pattern, category, subcategory) "
                 "VALUES (?, ?, ?)",
                 (pattern, category, subcategory),
@@ -677,10 +698,13 @@ def _try_parse_json_object(text: str) -> list[dict[str, Any]]:
 
 
 def _backfill_categories(conn: sqlite3.Connection) -> None:
+    # Fill-only (category IS NULL), matching backfill_categories() above: rows
+    # that already carry a category — whether stamped by a curator, semantic
+    # expansion, or a previous run — must not be overwritten by a re-run.
     rows = conn.execute("SELECT indicator_pattern, category FROM indicator_taxonomy").fetchall()
     for pattern, category in rows:
         conn.execute(
-            "UPDATE comment_indicators SET category = ? WHERE indicator = ?",
+            "UPDATE comment_indicators SET category = ? WHERE indicator = ? AND category IS NULL",
             (category, pattern),
         )
     conn.commit()

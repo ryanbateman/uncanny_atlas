@@ -39,13 +39,27 @@
 			hint: 'The sampled comments the LLM (gemma3) read directly, one per call, summed across every extraction run (per-run sizes are in the runs table below). Reading is slow, so only a sample is read each time — semantic expansion then covers the rest of the candidates cheaply.'
 		},
 		{
-			name: 'Comments citing an indicator',
+			name: 'Flagged as citing an indicator',
 			count: s.analysedComments,
 			pct: pctOf(s.analysedComments, s.semanticEligible),
 			unit: 'of eligible',
 			extra: `${pctOf(s.analysedComments, s.totalComments).toFixed(1)}% of all`,
-			hint: 'Comments with at least one concrete visual indicator, found by the LLM, semantic expansion, or keyword match. Semantic expansion is gated to comments ≥20 chars / non-bot (the same length floor as the sample), so it cannot pad this with one-word or emoji reactions. Most comments just react ("obviously AI") without naming a specific indicator, so this is the natural rate — not a processing backlog.'
-		}
+			hint: 'Comments the pipeline flagged with at least one indicator phrase — found by the LLM, semantic expansion, or keyword match, BEFORE curation. Includes phrases later judged to be noise (verdicts like "obviously AI") and the uncategorised long tail. Semantic expansion is gated to comments ≥20 chars / non-bot (the same length floor as the sample), so it cannot pad this with one-word or emoji reactions.'
+		},
+		// Guarded: a stale cached __data.json from a previous deploy lacks this
+		// field; skip the stage rather than render "0 · NaN%" (the prior
+		// stale-data incident class).
+		...(s.analysedNonNoise != null
+			? [
+					{
+						name: 'Citing a curated tell',
+						count: s.analysedNonNoise,
+						pct: pctOf(s.analysedNonNoise, s.semanticEligible),
+						unit: 'of eligible',
+						hint: 'The subset whose indicators survived curation: categorised into the taxonomy and not flagged as Noise. This is the honest headline number — the gap between this stage and the one above is what curation removes (verdict phrases, junk matches, the uncategorised tail), and it can shift as curation continues.'
+					}
+				]
+			: [])
 	]);
 </script>
 
@@ -92,7 +106,7 @@
 	{#each s.opinionKeywords as kw (kw)}<span class="pill">{kw}</span>{/each}
 </div>
 
-<h3>How the indicators were found <Hint text="Indicator ROWS by source (not comments). A single comment can carry several indicators, so these sum to more than the 'comments citing an indicator' stage above." /></h3>
+<h3>How the indicators were found <Hint text="Indicator ROWS by source (not comments). A single comment can carry several indicators, so these sum to more than the 'Flagged as citing an indicator' stage above." /></h3>
 <div class="cards">
 	<div class="card"><div class="value">{n(s.llm)}</div><div class="label">LLM-extracted <Hint text="Rows the LLM produced while reading the sampled comments." /></div></div>
 	<div class="card"><div class="value">{n(s.semantic)}</div><div class="label">Semantic matches <Hint text="Rows added by embedding similarity (batch_id semantic_*) — how coverage grows past the read sample. Restricted to comments ≥20 chars / non-bot (same length gate as the LLM sample), so one-word & emoji reactions are excluded." /></div></div>

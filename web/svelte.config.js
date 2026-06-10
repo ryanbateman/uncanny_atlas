@@ -9,6 +9,23 @@ import adapterStatic from '@sveltejs/adapter-static';
 // and `npm run build:static`.
 const isStatic = process.env.BUILD_TARGET === 'static';
 
+// SAFETY: the static target prerenders against the FULL local DB, and verbatim
+// comment text stays out of the output only because the read-only loads redact
+// it. A static build without ISTHISAI_READONLY would bake Reddit comment bodies
+// + usernames into public __data.json files. Refuse the combination outright —
+// `npm run build:static` sets both, so only a hand-rolled build can get here.
+// KEEP IN SYNC with the truthy-value list in src/lib/server/cache.ts (isReadonly).
+const isReadonlyEnv = ['1', 'true', 'yes', 'on'].includes(
+	(process.env.ISTHISAI_READONLY ?? '').toLowerCase()
+);
+if (isStatic && !isReadonlyEnv) {
+	throw new Error(
+		'BUILD_TARGET=static requires ISTHISAI_READONLY=1 — the public static build must ' +
+			'be read-only or it bakes verbatim comment text into the prerendered output. ' +
+			'Use `npm run build:static`, which sets both.'
+	);
+}
+
 // Sub-path hosting (e.g. the static site served under boat.horse/atlas). Set via
 // BASE_PATH; empty for root (local dev + the adapter-node deploy). The static build
 // script sets BASE_PATH=/atlas. Must start with, and not end with, a slash.

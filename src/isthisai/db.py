@@ -97,6 +97,8 @@ def migrate(conn: sqlite3.Connection) -> None:
         migrate_to_v6(conn)
     if version is None or int(version) < 7:
         migrate_to_v7(conn)
+    if version is None or int(version) < 8:
+        migrate_to_v8(conn)
 
 
 def migrate_to_v2(conn: sqlite3.Connection) -> None:
@@ -222,6 +224,45 @@ def migrate_to_v7(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def migrate_to_v8(conn: sqlite3.Connection) -> None:
+    # Takedown tombstones. Collection uses INSERT OR IGNORE against append-only
+    # archives, so deleting a row is not enough — the next collect/import would
+    # quietly re-insert it. A purge (isthisai-purge) therefore records a
+    # tombstone, and insert_submissions/insert_comments skip tombstoned ids,
+    # submissions, and authors. kind: 'comment' | 'submission' | 'author'.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS purge_tombstones ("
+        "kind TEXT NOT NULL, "
+        "id TEXT NOT NULL, "
+        "purged_at TEXT DEFAULT CURRENT_TIMESTAMP, "
+        "PRIMARY KEY (kind, id)"
+        ") STRICT"
+    )
+    conn.execute("UPDATE _isthisai_metadata SET value = '8' WHERE key = 'schema_version'")
+    conn.commit()
+
+
+def _tombstones(conn: sqlite3.Connection, kind: str) -> set[str]:
+    try:
+        rows = conn.execute("SELECT id FROM purge_tombstones WHERE kind = ?", (kind,)).fetchall()
+    except sqlite3.OperationalError as e:
+        # Only the missing-table case (pre-v8 DB) may be treated as "no
+        # tombstones". Anything else — e.g. 'database is locked' — must NOT be
+        # swallowed: an empty set here would silently re-import purged content.
+        if "no such table" in str(e):
+            return set()
+        raise
+    return {r[0] for r in rows}
+
+
+def _strip_t3(link_id: str | None) -> str | None:
+    # comments.link_id is stored both bare ("135gmrp") and prefixed ("t3_135gmrp")
+    # depending on the source; tombstones store the bare submission id.
+    if link_id and link_id.startswith("t3_"):
+        return link_id[3:]
+    return link_id
+
+
 def insert_submissions(
     conn: sqlite3.Connection, items: list[dict[str, Any]], subreddit: str = DEFAULT_SUBREDDIT
 ) -> int:
@@ -247,11 +288,18 @@ def insert_submissions(
     placeholders = ", ".join(["?"] * len(columns))
     sql = f"INSERT OR IGNORE INTO submissions ({', '.join(columns)}) VALUES ({placeholders})"
 
+    # Honour takedowns: never re-import purged submissions or purged authors.
+    # Author comparison is case-insensitive (casing varies across sources).
+    dead_subs = _tombstones(conn, "submission")
+    dead_authors = {a.lower() for a in _tombstones(conn, "author")}
+
     rows = []
     import time
 
     now = time.time()
     for item in items:
+        if item.get("id") in dead_subs or (item.get("author") or "").lower() in dead_authors:
+            continue
         rows.append(
             (
                 item.get("id"),
@@ -296,11 +344,24 @@ def insert_comments(
     placeholders = ", ".join(["?"] * len(columns))
     sql = f"INSERT OR IGNORE INTO comments ({', '.join(columns)}) VALUES ({placeholders})"
 
+    # Honour takedowns: never re-import purged comments, comments under purged
+    # submissions, or comments by purged authors. Author comparison is
+    # case-insensitive (casing varies across sources).
+    dead_comments = _tombstones(conn, "comment")
+    dead_subs = _tombstones(conn, "submission")
+    dead_authors = {a.lower() for a in _tombstones(conn, "author")}
+
     import time
 
     now = time.time()
     rows = []
     for item in items:
+        if (
+            item.get("id") in dead_comments
+            or _strip_t3(item.get("link_id")) in dead_subs
+            or (item.get("author") or "").lower() in dead_authors
+        ):
+            continue
         rows.append(
             (
                 item.get("id"),

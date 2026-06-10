@@ -17,8 +17,8 @@
 		<a href="https://reddit.com/r/isthisAI">r/isthisAI</a> and
 		<a href="https://reddit.com/r/RealOrAI">r/RealOrAI</a>, pulls out the “indicators” people cite - wrong hands, impossible shadows, garbled text - and maps them with language-model embeddings into a tally of the indicators people <em>actually</em> rely on. I then curate these to group them and turn them into an understandable dataset. <br/><br/>
 		It is currently based on
-		<strong>{n(data.totalComments)}</strong> comments. {#if data.eligible && data.analysed != null}Of the <strong>{n(data.eligible)}</strong>
-that potentially contain an indicator, <strong>{n(data.analysed)}</strong> ({(100 * data.analysed / data.eligible).toFixed(1)}%) have been found to contain at least one so far.{/if}{#if data.top}<br/><br/>In the current dataset the most-cited indicator is <span class="chip">{data.top.indicator}</span> with <strong>{n(data.top.count)}</strong> comments.
+		<strong>{n(data.totalComments)}</strong> comments. {#if data.eligible && data.analysed != null && data.analysedReal != null}Of the <strong>{n(data.eligible)}</strong>
+substantive comments, the pipeline has flagged <strong>{n(data.analysed)}</strong> ({(100 * data.analysed / data.eligible).toFixed(1)}%) as citing a possible indicator; after curation, <strong>{n(data.analysedReal)}</strong> ({(100 * data.analysedReal / data.eligible).toFixed(1)}%) cite a genuine visual tell.{/if}{#if data.top}<br/><br/>In the current dataset the most-cited indicator is <span class="chip">{data.top.indicator}</span> with <strong>{n(data.top.count)}</strong> comments.
 		{/if}
 	</p>
 

@@ -8,6 +8,9 @@
  *
  * Pairs with the read-only mode (db opened readonly + the /curate write guard).
  */
+// KEEP IN SYNC with the truthy-value list in web/svelte.config.js (the static
+// build guard): a value accepted here but not there (or vice versa) reopens
+// the gap between "redaction on" and "build allowed".
 const flag = (process.env.ISTHISAI_READONLY ?? '').toLowerCase();
 export const isReadonly = flag === '1' || flag === 'true' || flag === 'yes' || flag === 'on';
 

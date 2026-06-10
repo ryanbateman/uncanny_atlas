@@ -77,7 +77,7 @@ class TestSchema:
 
     def test_schema_version_metadata(self, tmp_db: sqlite3.Connection) -> None:
         version = get_metadata(tmp_db, "schema_version")
-        assert version == "5"
+        assert version == "8"
 
     def test_creates_db_directory(self, tmp_path) -> None:
 

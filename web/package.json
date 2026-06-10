@@ -7,7 +7,7 @@
 	"scripts": {
 		"dev": "vite dev",
 		"build": "vite build",
-		"build:static": "cross-env BUILD_TARGET=static ISTHISAI_READONLY=1 vite build",
+		"build:static": "cross-env BUILD_TARGET=static ISTHISAI_READONLY=1 vite build && node scripts/check-static-privacy.mjs",
 		"preview": "vite preview",
 		"prepare": "svelte-kit sync || echo ''",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",

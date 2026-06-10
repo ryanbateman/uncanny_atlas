@@ -108,7 +108,7 @@ Each extracted indicator gets its own row in `comment_indicators` with `batch_id
 
 ### Step 5: Backfill categories
 
-When the taxonomy is built, all existing `comment_indicators` rows are updated — each indicator phrase is looked up in the taxonomy and its `category` field is filled in.
+When the taxonomy is built, `comment_indicators` rows that don't yet have a category get one — each indicator phrase is looked up in the taxonomy and its `category` field is filled in where it was empty. Rows that already carry a category (curated or previously stamped) are never overwritten.
 
 ### Step 6: Embed taxonomy and comments
 
@@ -170,7 +170,7 @@ cd web && npm install && npm run dev   # http://localhost:5173
 
 ## Manual Refinement: What Persists
 
-**Changing a category in Curate → Categorize**: backfills all `comment_indicators` rows with that indicator phrase. Persists across anything except a full re-run of extraction (which would resample and overwrite).
+**Changing a category in Curate → Categorize**: backfills all `comment_indicators` rows with that indicator phrase. Persists across re-runs: taxonomy rebuilds only add new patterns (never overwrite existing ones) and category backfills are fill-only, so curated decisions survive.
 
 **Assigning a category / toggling a seed (Curate → Indicators)**: writes through to `indicator_taxonomy` and backfills existing rows, so future semantic expansion inherits the decision.
 

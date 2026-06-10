@@ -36,6 +36,7 @@ isthisai-enrich = "isthisai.enrich:main"
 isthisai-import = "isthisai.import_data:main"
 isthisai-extract = "isthisai.extract:main"
 isthisai-embed = "isthisai.embed:main"
+isthisai-purge = "isthisai.purge:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/isthisai"]

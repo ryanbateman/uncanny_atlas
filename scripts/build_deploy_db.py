@@ -10,11 +10,17 @@ self-contained snapshot that is safe to serve publicly:
      DELETE journal mode — no -wal/-shm siblings, consistent even if the source is
      mid-WAL);
   2. ``DROP TABLE comment_embeddings`` — the ~2.8 GB of 768-dim BLOBs, read by the
-     web app only for a status COUNT(*), which is guarded to return 0 when absent;
-  3. ``UPDATE comments SET body = NULL, author = NULL`` — remove the only PII /
-     verbatim-text columns. Every chart aggregates over created_utc / subreddit /
-     link_id / score + the comment_indicators join, so nothing visible changes; the
-     public site shows no per-comment examples anyway (read-only mode);
+     web app only for a status COUNT(*), which is guarded to return 0 when absent —
+     and ``DROP TABLE purge_tombstones`` — the takedown registry, which names the
+     very people who asked to be removed and is only needed at insert time;
+  3. strip PII / verbatim text from BOTH content tables:
+     ``UPDATE comments SET body = NULL, author = NULL`` and
+     ``UPDATE submissions SET author/title/selftext/permalink/url = NULL``
+     (permalink and url embed the slugified title, so they go too).
+     Every chart aggregates over created_utc / subreddit / link_id / score /
+     is_video / is_self / flair + the comment_indicators join, so nothing visible
+     changes; the public site shows no per-comment or per-post text anyway
+     (read-only mode);
   4. ``VACUUM`` again to reclaim the freed pages.
 
 Run it offline; never commit the output. Serve it with ISTHISAI_READONLY=1.
@@ -76,18 +82,37 @@ def build(source: Path, output: Path, force: bool) -> None:
             dst.execute("DROP TABLE comment_embeddings")
         else:
             print("[2/4] comment_embeddings already absent; skipping.")
+        # The takedown registry must NEVER ship: kind='author' rows name exactly the
+        # people who asked to be removed. Tombstones are only consulted at insert
+        # time in the canonical DB; the deploy DB takes no inserts.
+        dst.execute("DROP TABLE IF EXISTS purge_tombstones")
 
-        print("[3/4] Nulling comments.body + comments.author (aggregate-only) ...")
+        print("[3/4] Nulling comments.body/author + submissions text columns ...")
         dst.execute("UPDATE comments SET body = NULL, author = NULL")
+        # permalink embeds the slugified TITLE and url duplicates it for self
+        # posts, so both must go with title/selftext or the text survives in
+        # recoverable form. No public chart reads either column.
+        dst.execute(
+            "UPDATE submissions SET author = NULL, title = NULL, selftext = NULL, "
+            "permalink = NULL, url = NULL"
+        )
         dst.commit()
 
         print("[4/4] VACUUM + journal_mode=DELETE ...")
         dst.execute("VACUUM")
         dst.execute("PRAGMA journal_mode = DELETE")
 
-        # Sanity checks.
+        # Sanity checks — BOTH content tables must be clean.
         leaked = dst.execute(
             "SELECT COUNT(*) FROM comments WHERE body IS NOT NULL OR author IS NOT NULL"
+        ).fetchone()[0]
+        leaked_subs = dst.execute(
+            "SELECT COUNT(*) FROM submissions "
+            "WHERE author IS NOT NULL OR title IS NOT NULL OR selftext IS NOT NULL "
+            "OR permalink IS NOT NULL OR url IS NOT NULL"
+        ).fetchone()[0]
+        leaked_tombstones = dst.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='purge_tombstones'"
         ).fetchone()[0]
         comments = dst.execute("SELECT COUNT(*) FROM comments").fetchone()[0]
         indicators = dst.execute("SELECT COUNT(*) FROM comment_indicators").fetchone()[0]
@@ -96,12 +121,17 @@ def build(source: Path, output: Path, force: bool) -> None:
 
     if leaked:
         sys.exit(f"ERROR: {leaked} comment rows still carry body/author — aborting.")
+    if leaked_subs:
+        sys.exit(f"ERROR: {leaked_subs} submission rows still carry text/identity columns — aborting.")
+    if leaked_tombstones:
+        sys.exit("ERROR: purge_tombstones (the takedown registry) survived into the deploy DB — aborting.")
 
     print()
     print("Done. Aggregate-only deploy DB written.")
     print(f"  comments rows         : {comments:,}")
     print(f"  comment_indicators    : {indicators:,}")
-    print(f"  body/author remaining : {leaked} (must be 0)")
+    print(f"  comment text leaked   : {leaked} (must be 0)")
+    print(f"  submission text leaked: {leaked_subs} (must be 0)")
     print(f"  output size           : {_mb(output):,.0f} MB  (was {_mb(source):,.0f} MB)")
     print()
     print("Serve it read-only:  ISTHISAI_DB_PATH=<output> ISTHISAI_READONLY=1 node web/build")

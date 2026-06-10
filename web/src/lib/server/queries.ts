@@ -745,6 +745,15 @@ export function pipelineStatus() {
 		).c > 0;
 	const totalComments = one('SELECT COUNT(*) AS c FROM comments');
 	const analysedComments = one('SELECT COUNT(DISTINCT comment_id) AS c FROM comment_indicators');
+	// The curated subset of the above: comments whose indicator rows survived
+	// curation (categorised, and not flagged Noise). analysedComments counts what
+	// the PIPELINE flagged; this counts what a reader should treat as genuine
+	// tells. The two are shown together so the gap (what curation removes) is
+	// visible rather than silently folded into the headline.
+	const analysedNonNoise = one(
+		"SELECT COUNT(DISTINCT comment_id) AS c FROM comment_indicators " +
+			"WHERE category IS NOT NULL AND category != 'Noise'"
+	);
 	// "Candidate" comments: those that could plausibly name a visual tell — the same
 	// filter the pipeline samples from. Mirror of get_opinion_comment_ids() in
 	// src/isthisai/extract.py; KEEP THESE LISTS IN SYNC with OPINION_KEYWORDS /
@@ -798,6 +807,7 @@ export function pipelineStatus() {
 		semanticEligible,
 		opinionKeywords: OPINION_KEYWORDS,
 		analysedComments,
+		analysedNonNoise,
 		taxonomy,
 		embeddedIndicators,
 		embeddedComments,
@@ -825,6 +835,7 @@ export function headlineStats() {
 		candidates: s.candidateComments,
 		eligible: s.semanticEligible,
 		analysed: s.analysedComments,
+		analysedReal: s.analysedNonNoise,
 		embedded: s.embeddedComments,
 		llmSample: s.llmSample,
 		semantic: s.semantic,

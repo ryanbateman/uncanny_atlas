@@ -111,7 +111,8 @@ Requires `gemma3:4b` running via Ollama (see "Running Ollama reliably" above).
 # 5. Extract indicators from a random sample of 2,500 opinion comments
 uv run isthisai-extract sample
 
-# 6. Build taxonomy — categorise the top 200 most frequent indicators into 9 categories
+# 6. Build taxonomy — categorise the top 200 most frequent indicators into the
+#    8 taxonomy categories (curation can additionally flag entries as Noise)
 uv run isthisai-extract taxonomy
 
 # 7. Regex-based keyword expansion (optional; semantic expansion generally preferred)
@@ -137,7 +138,9 @@ uv run isthisai-embed comments --all
 uv run isthisai-embed ground            # add --dry-run to preview, --threshold 0.45 to tune
 
 # 11. Match comment embeddings to taxonomy by cosine similarity
-uv run isthisai-embed semantic --threshold 0.65
+#     (default threshold 0.73 — lower values over-match; 0.65 historically made
+#     generic seeds vacuum up hundreds of unrelated comments)
+uv run isthisai-embed semantic
 
 # 12. Show embedding coverage and source counts
 uv run isthisai-embed status
@@ -210,7 +213,7 @@ Override defaults in `.env` or shell environment:
 | `ISTHISAI_OLLAMA_KEEP_ALIVE` | `10m` | How long Ollama keeps the model loaded; use `24h`/`-1` to pin it for a long run |
 | `ISTHISAI_OLLAMA_TIMEOUT` | `600` | Ollama request timeout (seconds) |
 | `ISTHISAI_EMBED_MODEL` | `nomic-embed-text` | Embedding model name |
-| `ISTHISAI_EMBED_THRESHOLD` | `0.65` | Semantic expansion cosine similarity threshold |
+| `ISTHISAI_EMBED_THRESHOLD` | `0.73` | Semantic expansion cosine similarity threshold |
 | `ISTHISAI_EMBED_BATCH_SIZE` | `64` | Embedding batch size |
 
 ## Development
