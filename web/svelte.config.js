@@ -1,5 +1,19 @@
+import { execSync } from 'node:child_process';
 import adapterNode from '@sveltejs/adapter-node';
 import adapterStatic from '@sveltejs/adapter-static';
+
+// Version-skew protection: a deploy changes the data shapes the route code
+// expects, so a tab loaded BEFORE the deploy that client-side-navigates AFTER
+// it runs old code against new __data.json and dies mid-render ("page fails to
+// load unless I hard reload"). Naming the version and polling lets SvelteKit
+// detect the new deploy and turn the next navigation into a full-page load.
+function buildVersion() {
+	try {
+		return execSync('git rev-parse --short HEAD').toString().trim();
+	} catch {
+		return String(Date.now()); // not a git checkout — any unique-ish value works
+	}
+}
 
 // Two build targets from one source:
 //   default            -> adapter-node  (local dev/curation + the Docker deploy)
@@ -54,7 +68,11 @@ const config = {
 		// of its (sub)domain, so relative paths broke assets on sub-pages — e.g. the
 		// licensed font's `./fonts/fonts.css` resolved to `/explore/fonts/…` → 404.
 		// `base` still prefixes everything, so a sub-path deploy stays correct.
-		paths: { base, relative: false }
+		paths: { base, relative: false },
+		// pollInterval: open tabs check /_app/version.json every 60s; on a version
+		// change the next client-side navigation becomes a full-page load, so a
+		// deploy can never strand a stale tab on broken in-place navigation.
+		version: { name: buildVersion(), pollInterval: 60_000 }
 	}
 };
 
