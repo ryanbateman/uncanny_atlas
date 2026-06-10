@@ -118,9 +118,8 @@ substantive comments, the pipeline has flagged <strong>{n(data.analysed)}</stron
 	</ul>
 	<p class="noncommercial">
 		Uncanny Atlas is a non-commercial research showcase and intentionally does not include any particular user data. If you are a Reddit user and somehow find a
-		contribution of yours included, <a href={CONTACT}>contact us</a> and it will be removed from the
-		next rebuild. The public snapshot is periodically rebuilt from the upstream archives, which
-		propagate deletions.
+		contribution of yours included, <a href={CONTACT}>contact me</a> and it will be removed from
+		the dataset and from the next published rebuild.
 	</p>
 
 	<h2 id="limits">Methodology &amp; limitations</h2>

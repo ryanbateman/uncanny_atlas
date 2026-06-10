@@ -316,6 +316,13 @@ def semantic_expand(
 
     batch_id = f"semantic_{int(time.time())}"
     total_matches = 0
+    # Per-seed gain control: count NEW rows per seed (INSERT OR IGNORE re-hits an
+    # established seed's existing rows every run, so attempts are meaningless —
+    # but a degenerate seed announces itself with thousands of new rows in its
+    # first run). Every historical over-match incident (SynthID: 12k rows, the
+    # verdict phrases: 19k) had exactly that signature.
+    new_rows = 0
+    new_per_seed: dict[str, int] = {}
     batch_size = 500
 
     # Keyset pagination by rowid (O(1) per page). OFFSET would re-scan and skip
@@ -347,13 +354,16 @@ def semantic_expand(
                     pattern = patterns[j]
                     category = taxonomy.get(pattern)
                     try:
-                        conn.execute(
+                        cur = conn.execute(
                             "INSERT OR IGNORE INTO comment_indicators "
                             "(comment_id, indicator, category, batch_id) "
                             "VALUES (?, ?, ?, ?)",
                             (cid, pattern, category, batch_id),
                         )
                         total_matches += 1
+                        if cur.rowcount > 0:  # actually inserted (not ignored)
+                            new_rows += 1
+                            new_per_seed[pattern] = new_per_seed.get(pattern, 0) + 1
                     except sqlite3.IntegrityError:
                         pass
 
@@ -368,7 +378,33 @@ def semantic_expand(
     # Clear the "pending re-expansion" tracker — everything marked since the last
     # run has now been expanded against.
     set_metadata(conn, "pending_expansion", "[]")
-    print(f"\nSemantic expansion complete: {total_matches:,} matches found.")
+    print(
+        f"\nSemantic expansion complete: {total_matches:,} matches found "
+        f"({new_rows:,} new rows)."
+    )
+
+    # Per-seed report + over-match alarm. Detection, not prevention: the run
+    # still completes, but a degenerate seed is loud NOW instead of being
+    # discovered weeks later via weird comments in the UI.
+    if new_rows:
+        ranked = sorted(new_per_seed.items(), key=lambda kv: kv[1], reverse=True)
+        print("Top seeds by new rows this run:")
+        for pattern, n in ranked[:10]:
+            print(f"  {n:>7,}  {100 * n / new_rows:5.1f}%  {pattern}")
+        # A seed must clear BOTH bars to trip: an absolute floor (small runs are
+        # noisy) and a share of the run's new rows. Established seeds add ~0 new
+        # rows at steady state, so they never trip; SynthID-class incidents
+        # (~58% of their run) trip immediately.
+        alarm_floor, alarm_share = 500, 0.05
+        for pattern, n in ranked:
+            if n >= alarm_floor and n / new_rows >= alarm_share:
+                print(
+                    f"  WARNING: seed {pattern!r} added {n:,} rows "
+                    f"({100 * n / new_rows:.0f}% of this run's new rows) — possible "
+                    f"over-match. Inspect its matches (Explore -> Semantic matches) "
+                    f"before curating on top of them; remove with Curate -> Seeds "
+                    f"if degenerate."
+                )
 
 
 def ground_indicators(
