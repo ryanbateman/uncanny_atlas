@@ -2,6 +2,7 @@
 	import Plot from '$lib/Plot.svelte';
 	import Figure from '$lib/Figure.svelte';
 	import Hint from '$lib/Hint.svelte';
+	import MediaSelect from '$lib/MediaSelect.svelte';
 	import SelfHostNotice from '$lib/SelfHostNotice.svelte';
 	import { n } from '$lib/format';
 	import {
@@ -29,6 +30,14 @@
 	let catNoise = $state(false);
 	let otNoise = $state(false);
 	let subNoise = $state(false);
+	// Per-chart/table media filters ('' = All). Server rows carry a media
+	// dimension; filtering selects it, All sums it away — exact, because each
+	// comment/post belongs to exactly one submission, hence one media type.
+	let topMedia = $state('');
+	let tableMedia = $state('');
+	let catMedia = $state('');
+	let otMedia = $state('');
+	let bySubMedia = $state('');
 
 	const toDate = (iso: string) => new Date(iso + 'T00:00:00Z');
 	// Shared continuous UTC domain (fixed start, no gaps), matching the Overview
@@ -37,21 +46,46 @@
 		data.domain ? [toDate(data.domain.min), toDate(data.domain.max)] : undefined
 	);
 
+	// Filter rows by media, then sum the media dimension away, grouped by `key`.
+	function byMedia<T extends { media: string; count: number }>(
+		rows: T[],
+		media: string,
+		key: (r: T) => string
+	): Map<string, { row: T; count: number }> {
+		const out = new Map<string, { row: T; count: number }>();
+		for (const r of rows) {
+			if (media && r.media !== media) continue;
+			const k = key(r);
+			const cur = out.get(k);
+			if (cur) cur.count += r.count;
+			else out.set(k, { row: r, count: r.count });
+		}
+		return out;
+	}
+
 	// Category-decomposition charts ship with the Noise category; drop it unless the
-	// chart's "Show noise" toggle is on.
-	const categoryData = $derived(
-		catNoise ? data.categoryCounts : data.categoryCounts.filter((r) => r.category !== 'Noise')
-	);
-	const bySubData = $derived(
-		subNoise ? data.bySubreddit : data.bySubreddit.filter((r) => r.category !== 'Noise')
-	);
+	// chart's "Show noise" toggle is on. Media filter first, then noise.
+	const categoryData = $derived.by(() => {
+		const agg = [...byMedia(data.categoryCounts, catMedia, (r) => r.category).values()].map(
+			({ row, count }) => ({ category: row.category, count })
+		);
+		return catNoise ? agg : agg.filter((r) => r.category !== 'Noise');
+	});
+	const bySubData = $derived.by(() => {
+		const agg = [
+			...byMedia(data.bySubreddit, bySubMedia, (r) => `${r.category}|${r.subreddit}`).values()
+		].map(({ row, count }) => ({ category: row.category, subreddit: row.subreddit, count }));
+		return subNoise ? agg : agg.filter((r) => r.category !== 'Noise');
+	});
 
 	// Densify the selected-granularity series over its contiguous bucket list:
 	// stacked/normalized areas misrender when a category is absent for some periods.
 	// Fill every bucket × category with 0, keep a stable category order (largest
 	// first), and carry a real Date for the time scale.
 	const otData = $derived.by(() => {
-		let rows = data.overTime[otGran] as { period: string; category: string; count: number }[];
+		let rows = [...byMedia(data.overTime[otGran], otMedia, (r) => `${r.period}|${r.category}`).values()].map(
+			({ row, count }) => ({ period: row.period, category: row.category, count })
+		);
 		if (!otNoise) rows = rows.filter((r) => r.category !== 'Noise');
 		const totals = new Map<string, number>();
 		for (const r of rows) totals.set(r.category, (totals.get(r.category) ?? 0) + r.count);
@@ -64,10 +98,49 @@
 		return { dense, categories };
 	});
 
-	// Top-indicator series for the selected granularity (densified server-side),
-	// with a Date attached for the time scale.
-	const topData = $derived(data.topOverTime[topGran]);
-	const topSeries = $derived(topData.series.map((r) => ({ ...r, date: toDate(r.period) })));
+	// Top-10 over time: the server ships SPARSE (period, indicator, media) rows
+	// for the union of every facet's top 10. Filter to the selected media, rank
+	// that facet's own top 10, then densify over the contiguous bucket list
+	// (this densify loop used to run server-side; it moved here with the filter).
+	const topData = $derived.by(() => {
+		const agg = [
+			...byMedia(data.topOverTime[topGran].rows, topMedia, (r) => `${r.period}|${r.indicator}`).values()
+		].map(({ row, count }) => ({ period: row.period, indicator: row.indicator, count }));
+		const totals = new Map<string, number>();
+		for (const r of agg) totals.set(r.indicator, (totals.get(r.indicator) ?? 0) + r.count);
+		const indicators = [...totals.entries()]
+			.sort((a, b) => b[1] - a[1])
+			.slice(0, 10)
+			.map((e) => e[0]);
+		const keep = new Set(indicators);
+		const have = new Map<string, number>();
+		for (const r of agg) if (keep.has(r.indicator)) have.set(`${r.period} ${r.indicator}`, r.count);
+		const series: { period: string; date: Date; indicator: string; count: number }[] = [];
+		for (const p of data.periods[topGran])
+			for (const ind of indicators)
+				series.push({ period: p, date: toDate(p), indicator: ind, count: have.get(`${p} ${ind}`) ?? 0 });
+		return { series, indicators };
+	});
+	const topSeries = $derived(topData.series);
+
+	// Top table: re-rank the (canonical, media) rows for the selected media.
+	// Category is media-invariant in practice; take the max across an
+	// indicator's rows for a stable pill (mirrors the SQL's MAX(ci.category)).
+	const tableRows = $derived.by(() => {
+		const counts = new Map<string, { count: number; category: string }>();
+		for (const r of data.top) {
+			if (tableMedia && r.media !== tableMedia) continue;
+			const cur = counts.get(r.indicator);
+			if (cur) {
+				cur.count += r.count;
+				if (r.category > cur.category) cur.category = r.category;
+			} else counts.set(r.indicator, { count: r.count, category: r.category });
+		}
+		return [...counts.entries()]
+			.map(([indicator, v]) => ({ indicator, ...v }))
+			.sort((a, b) => b.count - a.count)
+			.slice(0, 40);
+	});
 </script>
 
 <h2>Top Indicators</h2>
@@ -76,6 +149,7 @@
 	per indicator per comment. A single comment can mention several indicators across several categories, so category totals sum to more than the number of comments. Phrases are alias-resolved, so merged
 	indicators (see Curate → Merge) collapse into their canonical form (e.g. '3 hands' and 'weird hands' may have been merged, and each counted simply toward 'Hands'). 
 	The two over-time charts go a step further: each post is counted once per indicator (not once per comment), so a single viral post can't dominate a trend.
+	Every chart and the table can be filtered by the <strong>medium</strong> of the post (video / image / text / other — classified from Reddit's flags plus the link itself); "All media" is always exactly the sum of the four.
 </p>
 
 <Figure
@@ -84,6 +158,7 @@
 	caption="The ten most-cited indicators overall, each tracked over time. Click a name in the legend to inspect that indicator."
 >
 	{#snippet controls()}
+		<MediaSelect bind:value={topMedia} />
 		<select bind:value={topGran} class="chart-mode" aria-label="Granularity">
 			<option value="week">Week</option>
 			<option value="month">Month</option>
@@ -122,14 +197,20 @@
 	/>
 </Figure>
 
-<h3>Top indicators <Hint text="The most-cited individual indicators, alias-resolved so merged phrases (Curate → Merge) are combined into one canonical entry." /></h3>
+<h3>Top indicators <Hint text="The most-cited individual indicators, alias-resolved so merged phrases (Curate → Merge) are combined into one canonical entry. Filter by the medium of the post to see e.g. which tells are video-specific." /></h3>
 <div class="table-card">
-{#if data.top.length}
+	<div class="filter-bar table-controls">
+		<label>
+			Media
+			<MediaSelect bind:value={tableMedia} />
+		</label>
+	</div>
+{#if tableRows.length}
 <div class="table-scroll">
 	<table>
 		<thead><tr><th>Indicator</th><th>Category</th><th class="num">Comments <Hint text="Distinct comments that cite this indicator (counting each comment once, summed across merged variants)." /></th></tr></thead>
 		<tbody>
-			{#each data.top as row (row.indicator)}
+			{#each tableRows as row (row.indicator)}
 				<tr>
 					<td><a href="/explore/lookup?indicator={encodeURIComponent(row.indicator)}">{row.indicator}</a>{#if data.mergeGroups[row.indicator]?.length}<span class="merge-badge canon" style="margin-left:6px" title="Merged from {data.mergeGroups[row.indicator].length} phrase(s): {data.mergeGroups[row.indicator].join(', ')}">{data.mergeGroups[row.indicator].length} merged</span>{/if}</td>
 					<td><span class="pill">{row.category}</span></td>
@@ -140,7 +221,7 @@
 	</table>
 </div>
 {:else}
-<div class="table-empty">No indicators yet.</div>
+<div class="table-empty">No indicators for this media type.</div>
 {/if}
 </div>
 
@@ -150,6 +231,7 @@
 	caption="Total mentions in each taxonomy category. A comment can contribute to several categories. Noise = phrases marked as non-indicators; toggle it in with Show noise."
 >
 	{#snippet controls()}
+		<MediaSelect bind:value={catMedia} />
 		<label class="chart-toggle"><input type="checkbox" bind:checked={catNoise} /> Show noise</label>
 	{/snippet}
 	<Plot
@@ -174,6 +256,7 @@
 	caption="Mentions per bucket, stacked by category. Toggle 100% to compare each period's mix regardless of volume."
 >
 	{#snippet controls()}
+		<MediaSelect bind:value={otMedia} />
 		<label class="chart-toggle"><input type="checkbox" bind:checked={otNoise} /> Show noise</label>
 		<select bind:value={otGran} class="chart-mode" aria-label="Granularity">
 			<option value="week">Week</option>
@@ -211,6 +294,7 @@
 	caption="Category mentions split by subreddit, to compare what each community focuses on."
 >
 	{#snippet controls()}
+		<MediaSelect bind:value={bySubMedia} />
 		<label class="chart-toggle"><input type="checkbox" bind:checked={subNoise} /> Show noise</label>
 	{/snippet}
 	<Plot

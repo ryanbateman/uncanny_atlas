@@ -615,24 +615,199 @@ export function clusterSuggestions(threshold = 0.7) {
 	const usageStmt = prep('SELECT COUNT(*) AS c FROM comment_indicators WHERE indicator = ?');
 	const usageOf = (p: string) => (usageStmt.get(p) as { c: number }).c;
 
-	const assigned = new Set<number>();
 	const clusters: { members: { phrase: string; usage: number }[]; total: number }[] = [];
-	for (let i = 0; i < patterns.length; i++) {
-		if (assigned.has(i)) continue;
-		const group = [i];
-		assigned.add(i);
-		for (let j = i + 1; j < patterns.length; j++) {
-			if (assigned.has(j)) continue;
-			if (dot(vecs[i], vecs[j]) >= threshold) {
-				group.push(j);
-				assigned.add(j);
-			}
-		}
-		if (group.length < 2) continue;
+	for (const group of greedyClusterIndices(vecs, threshold)) {
 		const members = group
 			.map((idx) => ({ phrase: patterns[idx], usage: usageOf(patterns[idx]) }))
 			.sort((a, b) => b.usage - a.usage);
 		clusters.push({ members, total: members.reduce((s, m) => s + m.usage, 0) });
 	}
 	return clusters.sort((a, b) => b.total - a.total);
+}
+
+/**
+ * Greedy cosine clustering over unit vectors: each unassigned item seeds a
+ * cluster and absorbs every later unassigned item within `threshold`. Returns
+ * index groups of size >= 2. Pool ORDER matters: callers put the most important
+ * item first so it becomes the cluster anchor.
+ */
+function greedyClusterIndices(vecs: Float32Array[], threshold: number): number[][] {
+	const assigned = new Set<number>();
+	const groups: number[][] = [];
+	for (let i = 0; i < vecs.length; i++) {
+		if (assigned.has(i)) continue;
+		const group = [i];
+		assigned.add(i);
+		for (let j = i + 1; j < vecs.length; j++) {
+			if (assigned.has(j)) continue;
+			if (dot(vecs[i], vecs[j]) >= threshold) {
+				group.push(j);
+				assigned.add(j);
+			}
+		}
+		if (group.length >= 2) groups.push(group);
+	}
+	return groups;
+}
+
+// ---- emerging (uncategorised) clusters -----------------------------------
+//
+// The discovery feed: phrases NO seed matched (which is exactly where a new
+// tell first appears) clustered by embedding similarity and ranked by
+// recency-weighted citations. Embeddings come from phrase_embeddings (schema
+// v9, written by `isthisai-embed ground`/`categorize`).
+
+const EMERGING_KEY = 'emerging_clusters';
+// Half-life of a citation's weight in the recency score: 8 weeks, in seconds.
+// A citation today counts 1.0, an 8-week-old one 0.5, a 16-week-old one 0.25.
+const HALF_LIFE_S = 56 * 86400;
+// Greedy clustering is O(pool²) 768-dim dots. 2,500 phrases ≈ 3.1M pairs ×768
+// mult-adds ≈ 2.4e9 ops ≈ 1–3 s in a tight Float32Array loop; the full ~15k
+// pool would be ~9e10 ops (a minute+, blocking the single-threaded server) —
+// hence the cap, surfaced honestly in the UI ("top N of M").
+const EMERGE_POOL_CAP = 2500;
+// High-score phrases that land in no ≥2-member cluster would otherwise be
+// invisible (93% of phrases are singletons; a brand-new tell often has exactly
+// one phrasing). Surface the top few separately.
+const UNCLUSTERED_TOP = 20;
+
+export type EmergingMember = { phrase: string; citations: number; recent: number; score: number };
+export type EmergingCluster = {
+	score: number;
+	citations: number;
+	recent: number;
+	members: EmergingMember[];
+};
+export type EmergingSnapshot = {
+	computedAt: string; // ISO timestamp of the recompute
+	anchorUtc: number; // MAX(comments.created_utc) the decay was anchored to
+	threshold: number;
+	poolSize: number; // phrases actually clustered (after the cap)
+	eligible: number; // all uncategorised, un-aliased, non-seed phrases
+	missingEmbeddings: number; // eligible phrases with no phrase_embeddings row yet
+	clusters: EmergingCluster[];
+	unclustered: EmergingMember[]; // top pool phrases that joined no cluster
+};
+
+/** True once the Python v9 migration ran AND embeddings exist (never throws pre-v9). */
+export function hasPhraseEmbeddings(): boolean {
+	const table = sqlite
+		.prepare("SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name='phrase_embeddings'")
+		.get();
+	if (!table) return false;
+	return sqlite.prepare('SELECT 1 AS x FROM phrase_embeddings LIMIT 1').get() != null;
+}
+
+// Eligibility mirrors clusterSuggestions' exclusions: aliased phrases are
+// already merged; taxonomy phrases are seeds (curated, not emerging).
+const EMERGE_ELIGIBLE_WHERE = `
+	ci.category IS NULL
+	AND ci.indicator NOT IN (SELECT alias FROM indicator_aliases)
+	AND ci.indicator NOT IN (SELECT indicator_pattern FROM indicator_taxonomy)`;
+
+export function computeEmergingClusters(threshold = 0.7, cap = EMERGE_POOL_CAP): EmergingSnapshot {
+	// Decay is anchored to the DATASET's end, not wall clock: ranking is
+	// identical under any anchor (the decay is multiplicative), but "recent"
+	// stays meaningful when the corpus snapshot is months old.
+	const anchor = (prep('SELECT MAX(created_utc) AS m FROM comments').get() as { m: number }).m;
+
+	// Per-phrase recency score over its uncategorised citations. The embedding
+	// join doubles as the "clusterable" filter; selecting pe.embedding bare is
+	// safe because pe.phrase equals the GROUP BY key (one row per group).
+	// NOTE: vectors may mix embedding models if ISTHISAI_EMBED_MODEL changed
+	// between runs — heals via the INSERT OR REPLACE on the next categorize run
+	// (real fix is run-level model pinning, roadmap item 12).
+	const pool = prep(
+		`SELECT ci.indicator AS phrase, pe.embedding AS embedding,
+		        COUNT(*) AS citations,
+		        SUM(CASE WHEN c.created_utc >= @anchor - ${HALF_LIFE_S} THEN 1 ELSE 0 END) AS recent,
+		        SUM(pow(0.5, (@anchor - c.created_utc) / ${HALF_LIFE_S}.0)) AS score
+		 FROM comment_indicators ci
+		 JOIN comments c ON c.id = ci.comment_id
+		 JOIN phrase_embeddings pe ON pe.phrase = ci.indicator
+		 WHERE ${EMERGE_ELIGIBLE_WHERE}
+		 GROUP BY ci.indicator
+		 ORDER BY score DESC
+		 LIMIT @cap`
+	).all({ anchor, cap }) as {
+		phrase: string;
+		embedding: Buffer;
+		citations: number;
+		recent: number;
+		score: number;
+	}[];
+
+	const eligible = (
+		prep(
+			`SELECT COUNT(DISTINCT ci.indicator) AS c FROM comment_indicators ci WHERE ${EMERGE_ELIGIBLE_WHERE}`
+		).get() as { c: number }
+	).c;
+	const withEmbeddings = (
+		prep(
+			`SELECT COUNT(DISTINCT ci.indicator) AS c FROM comment_indicators ci
+			 JOIN phrase_embeddings pe ON pe.phrase = ci.indicator
+			 WHERE ${EMERGE_ELIGIBLE_WHERE}`
+		).get() as { c: number }
+	).c;
+
+	// Pool is score-descending, so the hottest phrase anchors each cluster.
+	const vecs = pool.map((r) => normalize(bufToFloat32(r.embedding)));
+	const member = (idx: number): EmergingMember => ({
+		phrase: pool[idx].phrase,
+		citations: pool[idx].citations,
+		recent: pool[idx].recent,
+		score: Math.round(pool[idx].score * 100) / 100
+	});
+
+	const clustered = new Set<number>();
+	const clusters: EmergingCluster[] = [];
+	for (const group of greedyClusterIndices(vecs, threshold)) {
+		for (const idx of group) clustered.add(idx);
+		const members = group.map(member); // already score-ordered within the pool
+		clusters.push({
+			score: Math.round(members.reduce((s, m) => s + m.score, 0) * 100) / 100,
+			citations: members.reduce((s, m) => s + m.citations, 0),
+			recent: members.reduce((s, m) => s + m.recent, 0),
+			members
+		});
+	}
+	clusters.sort((a, b) => b.score - a.score);
+
+	const unclustered: EmergingMember[] = [];
+	for (let i = 0; i < pool.length && unclustered.length < UNCLUSTERED_TOP; i++) {
+		if (!clustered.has(i)) unclustered.push(member(i));
+	}
+
+	return {
+		computedAt: new Date().toISOString(),
+		anchorUtc: anchor,
+		threshold,
+		poolSize: pool.length,
+		eligible,
+		missingEmbeddings: eligible - withEmbeddings,
+		clusters,
+		unclustered
+	};
+}
+
+/** Stored under _isthisai_metadata: computed on demand (the ?/recompute action),
+ *  never per page load — clustering costs seconds of CPU. Stale is fine; it's
+ *  refreshed as part of the monthly curation cycle. */
+export function saveEmergingSnapshot(s: EmergingSnapshot): void {
+	prep('INSERT OR REPLACE INTO _isthisai_metadata (key, value) VALUES (?, ?)').run(
+		EMERGING_KEY,
+		JSON.stringify(s)
+	);
+}
+
+export function loadEmergingSnapshot(): EmergingSnapshot | null {
+	const row = prep('SELECT value FROM _isthisai_metadata WHERE key = ?').get(EMERGING_KEY) as
+		| { value: string }
+		| undefined;
+	if (!row?.value) return null;
+	try {
+		return JSON.parse(row.value) as EmergingSnapshot;
+	} catch {
+		return null;
+	}
 }

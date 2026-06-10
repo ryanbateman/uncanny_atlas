@@ -301,3 +301,119 @@ class TestEmbedStatus:
         captured = capsys.readouterr()
         assert "Embedding Status" in captured.out
         assert "Indicator patterns embedded" in captured.out
+
+
+class TestEmergenceChannel:
+    """phrase_embeddings persistence + the categorize valve (no auto-Noise)."""
+
+    @staticmethod
+    def _vec(first: float, second: float = 0.0):
+        v = [0.0] * EMBEDDING_DIMS
+        v[0], v[1] = first, second
+        return v
+
+    def _patch_ollama(self, monkeypatch, vec_for):
+        # Patch in embed's namespace: is_model_loaded is imported INTO isthisai.embed.
+        import isthisai.embed as mod
+
+        monkeypatch.setattr(mod, "is_model_loaded", lambda **kw: True)
+        monkeypatch.setattr(
+            mod,
+            "call_ollama_embed_with_retry",
+            lambda texts, model=None, base_url=None, **kw: [vec_for(t) for t in texts],
+        )
+
+    def _seed_taxonomy(self, conn):
+        conn.execute(
+            "INSERT INTO indicator_taxonomy (indicator_pattern, category, subcategory) "
+            "VALUES ('weird hands', 'Anatomy', NULL)"
+        )
+        conn.execute(
+            "INSERT INTO indicator_embeddings (indicator_pattern, embedding, model) "
+            "VALUES ('weird hands', ?, 'test-model')",
+            (pack_embedding(self._vec(1.0)),),
+        )
+        conn.commit()
+
+    def test_categorize_persists_phrase_embeddings_and_assigns(self, embed_db, monkeypatch):
+        from isthisai.embed import categorize_indicators
+
+        self._seed_taxonomy(embed_db)
+        embed_db.execute(
+            "INSERT INTO comment_indicators (comment_id, indicator, category, batch_id) "
+            "VALUES ('ec3', 'mangled fingers', NULL, 'abcd1234')"
+        )
+        embed_db.commit()
+        # Near the seed vector -> above threshold -> assigned the seed's category.
+        self._patch_ollama(monkeypatch, lambda t: self._vec(0.9, 0.1))
+
+        categorize_indicators(embed_db, threshold=0.5)
+
+        row = embed_db.execute(
+            "SELECT embedding, model FROM phrase_embeddings WHERE phrase = 'mangled fingers'"
+        ).fetchone()
+        assert row is not None
+        assert unpack_embedding(row[0])[0] == pytest.approx(0.9)
+        cat = embed_db.execute(
+            "SELECT category FROM comment_indicators WHERE indicator = 'mangled fingers'"
+        ).fetchone()[0]
+        assert cat == "Anatomy"
+
+    def test_categorize_below_threshold_stays_uncategorised(self, embed_db, monkeypatch, capsys):
+        """The valve: far-from-every-seed phrases must NOT be auto-Noised."""
+        from isthisai.embed import categorize_indicators
+
+        self._seed_taxonomy(embed_db)
+        embed_db.execute(
+            "INSERT INTO comment_indicators (comment_id, indicator, category, batch_id) "
+            "VALUES ('ec3', 'totally novel tell', NULL, 'abcd1234')"
+        )
+        embed_db.commit()
+        # Orthogonal to the seed -> below any reasonable threshold.
+        self._patch_ollama(monkeypatch, lambda t: self._vec(0.0, 1.0))
+
+        categorize_indicators(embed_db, threshold=0.99)
+
+        cat = embed_db.execute(
+            "SELECT category FROM comment_indicators WHERE indicator = 'totally novel tell'"
+        ).fetchone()[0]
+        assert cat is None  # stays uncategorised — specifically NOT 'Noise'
+        assert (
+            embed_db.execute(
+                "SELECT COUNT(*) FROM phrase_embeddings WHERE phrase = 'totally novel tell'"
+            ).fetchone()[0]
+            == 1
+        )  # embedding persisted even though no category was assigned
+        assert "left uncategorised" in capsys.readouterr().out
+
+    def test_ground_persists_phrase_embeddings(self, embed_db, monkeypatch):
+        from isthisai.embed import ground_indicators
+
+        # An LLM row (8-char batch id) whose comment has an embedding; identical
+        # vectors -> similarity 1.0 -> survives any threshold.
+        embed_db.execute(
+            "INSERT INTO comment_indicators (comment_id, indicator, category, batch_id) "
+            "VALUES ('ec1', 'grounded cue', NULL, 'abcd1234')"
+        )
+        embed_db.execute(
+            "INSERT INTO comment_embeddings (comment_id, embedding, model) "
+            "VALUES ('ec1', ?, 'test-model')",
+            (pack_embedding(self._vec(1.0)),),
+        )
+        embed_db.commit()
+        self._patch_ollama(monkeypatch, lambda t: self._vec(1.0))
+
+        ground_indicators(embed_db, threshold=0.5)
+
+        assert (
+            embed_db.execute(
+                "SELECT COUNT(*) FROM phrase_embeddings WHERE phrase = 'grounded cue'"
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            embed_db.execute(
+                "SELECT COUNT(*) FROM comment_indicators WHERE indicator = 'grounded cue'"
+            ).fetchone()[0]
+            == 1
+        )  # high similarity -> row kept

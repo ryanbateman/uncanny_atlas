@@ -13,7 +13,7 @@ MAX_RETRY_DELAY = float(os.environ.get("ISTHISAI_MAX_RETRY_DELAY", "60.0"))
 REQUEST_TIMEOUT = float(os.environ.get("ISTHISAI_REQUEST_TIMEOUT", "30.0"))
 
 DB_PATH = Path(os.environ.get("ISTHISAI_DB_PATH", str(Path("data") / "isthisai.db")))
-CURRENT_SCHEMA_VERSION = 8
+CURRENT_SCHEMA_VERSION = 10
 
 OLLAMA_BASE_URL = os.environ.get("ISTHISAI_OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("ISTHISAI_OLLAMA_MODEL", "gemma3:4b")

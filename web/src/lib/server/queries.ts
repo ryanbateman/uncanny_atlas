@@ -161,6 +161,17 @@ export function overTimeDomain(): { min: string; max: string } | null {
 }
 
 /**
+ * Snapshot stamp for the footer: how recent the data is (latest collected
+ * activity) and the corpus size. The DATA date — not the build date — is what a
+ * citing reader needs: it stays meaningful across rebuilds of the same corpus.
+ */
+export function dataAsOf(): { date: string | null; comments: number } {
+	const b = overTimeBounds();
+	const comments = (prep('SELECT COUNT(*) AS c FROM comments').get() as { c: number }).c;
+	return { date: b ? isoDay(b.max) : null, comments };
+}
+
+/**
  * ISO date (UTC) of the earliest comment on any tracked subreddit — marked as a
  * vertical line on the over-time charts. The axis can start earlier (it's
  * extended back to the first tracked AI release), so this sits inside the range.
@@ -218,6 +229,18 @@ function indicatorWhere(opts: IndicatorOpts): Clause {
 export const CANONICAL_SQL =
 	'COALESCE(a.canonical, ci.canonical_indicator, ci.indicator)';
 const CANONICAL_JOIN = 'LEFT JOIN indicator_aliases a ON a.alias = ci.indicator';
+
+/**
+ * Submission media for a comment (formal classification: video|image|text|other,
+ * source of truth src/isthisai/media.py, stored as submissions.media_type).
+ * comments.link_id is stored BOTH bare and t3_-prefixed, so strip the prefix to
+ * hit the submissions PK. LEFT JOIN + COALESCE('other') is LOAD-BEARING: 83
+ * comments have no parent submission in the corpus, and a pre-v10 writer could
+ * leave media_type NULL — both fold into 'other' so the 'All' (= sum of the four
+ * media) totals stay exactly equal to the unfiltered charts.
+ */
+const MEDIA_JOIN = "LEFT JOIN submissions s ON s.id = REPLACE(c.link_id, 't3_', '')";
+const MEDIA_SQL = "COALESCE(s.media_type, 'other')";
 
 /**
  * Read-only merge map for Explore badges: each canonical with the alias phrases
@@ -279,23 +302,28 @@ export function commentsOverTime(o: BaseOpts & { granularity?: string } = {}) {
 export function submissionsOverTimeBySubreddit(o: BaseOpts & { granularity?: string } = {}) {
 	const period = bucketStartSql(o.granularity ?? 'day');
 	const w = buildWhere(dateFilter(o.startDate, o.endDate));
+	// media dimension: the client's per-chart media filter selects/sums these
+	// rows ('All' = sum across media — exact, since media partitions posts).
 	return sqlite
 		.prepare(
-			`SELECT ${period} AS period, subreddit, COUNT(*) AS count ` +
-				`FROM submissions ${w.sql} GROUP BY period, subreddit ORDER BY period, subreddit`
+			`SELECT ${period} AS period, subreddit, COALESCE(media_type, 'other') AS media, COUNT(*) AS count ` +
+				`FROM submissions ${w.sql} GROUP BY period, subreddit, media ORDER BY period, subreddit, media`
 		)
-		.all(...w.params) as { period: string; subreddit: string; count: number }[];
+		.all(...w.params) as { period: string; subreddit: string; media: string; count: number }[];
 }
 
 export function commentsOverTimeBySubreddit(o: BaseOpts & { granularity?: string } = {}) {
-	const period = bucketStartSql(o.granularity ?? 'day');
-	const w = buildWhere(dateFilter(o.startDate, o.endDate));
+	const period = bucketStartSql(o.granularity ?? 'day', 'c.created_utc');
+	const w = buildWhere(dateFilter(o.startDate, o.endDate, 'c.created_utc'));
+	// The media join costs this query its covering index (912k-row scan + PK
+	// probes, ~1-2s) — acceptable: it runs at build time / behind cached() only.
 	return sqlite
 		.prepare(
-			`SELECT ${period} AS period, subreddit, COUNT(*) AS count ` +
-				`FROM comments ${w.sql} GROUP BY period, subreddit ORDER BY period, subreddit`
+			`SELECT ${period} AS period, c.subreddit, ${MEDIA_SQL} AS media, COUNT(*) AS count ` +
+				`FROM comments c ${MEDIA_JOIN} ${w.sql} ` +
+				`GROUP BY period, c.subreddit, media ORDER BY period, c.subreddit, media`
 		)
-		.all(...w.params) as { period: string; subreddit: string; count: number }[];
+		.all(...w.params) as { period: string; subreddit: string; media: string; count: number }[];
 }
 
 export function flairOverTime(o: FlairOpts & { granularity?: string } = {}) {
@@ -345,31 +373,37 @@ export function scoreDistribution(o: FlairOpts = {}) {
 		.all(...w.params) as { score_bucket: string; count: number }[];
 }
 
-export function submissionTypeBreakdown(o: FlairOpts = {}) {
+/**
+ * Composition of the corpus by formal media type (video|image|text|other).
+ * Reads the stored submissions.media_type column — classified by Reddit's
+ * flags PLUS the link's host and file extension (galleries count as image);
+ * the rules live in src/isthisai/media.py. Never derives from url (the deploy
+ * DB strips url for privacy).
+ */
+export function mediaTypeBreakdown(o: FlairOpts = {}) {
 	const w = buildWhere(dateFilter(o.startDate, o.endDate), flairFilter(o.flairs), subredditFilter(o.subreddit));
 	return sqlite
 		.prepare(
-			`SELECT CASE WHEN is_video = 1 THEN 'video' WHEN is_self = 1 THEN 'text' ELSE 'link' END AS type, ` +
-				`COUNT(*) AS count FROM submissions ${w.sql} GROUP BY type ORDER BY count DESC`
+			`SELECT COALESCE(media_type, 'other') AS media, ` +
+				`COUNT(*) AS count FROM submissions ${w.sql} GROUP BY media ORDER BY count DESC`
 		)
-		.all(...w.params) as { type: string; count: number }[];
+		.all(...w.params) as { media: string; count: number }[];
 }
 
 /**
- * Submission-type composition (video / text / link) per time bucket — the media
- * mix over time, notably video's rise. Same is_video/is_self scheme as
- * submissionTypeBreakdown; 'link' is predominantly image posts (external links).
+ * Media-type composition (video|image|text|other) per time bucket — the media
+ * mix over time, notably video's rise. Same formal classification as
+ * mediaTypeBreakdown (see src/isthisai/media.py).
  */
-export function submissionTypeOverTime(o: BaseOpts & { granularity?: string } = {}) {
+export function mediaTypeOverTime(o: BaseOpts & { granularity?: string } = {}) {
 	const period = bucketStartSql(o.granularity ?? 'day');
 	const w = buildWhere(dateFilter(o.startDate, o.endDate));
 	return sqlite
 		.prepare(
-			`SELECT ${period} AS period, ` +
-				`CASE WHEN is_video = 1 THEN 'video' WHEN is_self = 1 THEN 'text' ELSE 'link' END AS type, ` +
-				`COUNT(*) AS count FROM submissions ${w.sql} GROUP BY period, type ORDER BY period, type`
+			`SELECT ${period} AS period, COALESCE(media_type, 'other') AS media, ` +
+				`COUNT(*) AS count FROM submissions ${w.sql} GROUP BY period, media ORDER BY period, media`
 		)
-		.all(...w.params) as { period: string; type: string; count: number }[];
+		.all(...w.params) as { period: string; media: string; count: number }[];
 }
 
 export function coverageCalendar(subreddit?: string) {
@@ -468,13 +502,14 @@ export function topAuthors(o: BaseOpts & { limit?: number } = {}) {
 
 export function indicatorCategoryCounts(o: IndicatorOpts = {}) {
 	const w = indicatorWhere(o);
+	// media dimension for the client-side filter; 'All' = sum across media.
 	return sqlite
 		.prepare(
-			`SELECT COALESCE(ci.category, 'Uncategorized') AS category, COUNT(*) AS count ` +
-				`FROM comment_indicators ci JOIN comments c ON ci.comment_id = c.id ${w.sql} ` +
-				`GROUP BY ci.category ORDER BY count DESC`
+			`SELECT COALESCE(ci.category, 'Uncategorized') AS category, ${MEDIA_SQL} AS media, COUNT(*) AS count ` +
+				`FROM comment_indicators ci JOIN comments c ON ci.comment_id = c.id ${MEDIA_JOIN} ${w.sql} ` +
+				`GROUP BY ci.category, media ORDER BY count DESC`
 		)
-		.all(...w.params) as { category: string; count: number }[];
+		.all(...w.params) as { category: string; media: string; count: number }[];
 }
 
 export function indicatorsOverTime(
@@ -483,24 +518,31 @@ export function indicatorsOverTime(
 	const period = bucketStartSql(o.granularity ?? 'month', 'c.created_utc');
 	const w = indicatorWhere(o);
 	// Default counts mentions (rows); dedupe counts distinct posts per period.
+	// Both stay exact under the media dimension: a post/comment belongs to
+	// exactly one submission, hence one media value, so per-media counts are
+	// additive and 'All' = sum across media.
 	const cnt = o.dedupeByPost ? 'COUNT(DISTINCT c.link_id)' : 'COUNT(*)';
 	return sqlite
 		.prepare(
 			`SELECT ${period} AS period, ` +
-				`COALESCE(ci.category, 'Uncategorized') AS category, ${cnt} AS count ` +
-				`FROM comment_indicators ci JOIN comments c ON ci.comment_id = c.id ${w.sql} ` +
-				`GROUP BY period, category ORDER BY period, category`
+				`COALESCE(ci.category, 'Uncategorized') AS category, ${MEDIA_SQL} AS media, ${cnt} AS count ` +
+				`FROM comment_indicators ci JOIN comments c ON ci.comment_id = c.id ${MEDIA_JOIN} ${w.sql} ` +
+				`GROUP BY period, category, media ORDER BY period, category, media`
 		)
-		.all(...w.params) as { period: string; category: string; count: number }[];
+		.all(...w.params) as { period: string; category: string; media: string; count: number }[];
 }
 
 /**
- * The overall top-N indicators (by total distinct comments) plotted over time.
+ * Top-N indicators over time, media-dimensioned for the client-side filter.
  *
- * We pick the N most-cited canonical cues across the whole range, then return a
- * dense series (each cue 0-filled in every period) so each draws a continuous
- * trend. Returns the series, the indicator order (by overall total), and the
- * period axis.
+ * Returns SPARSE `{period, indicator, media, count}` rows for the UNION of each
+ * facet's top-N (the 'All' facet plus each media type), so the client can
+ * re-rank and densify for ANY media selection without ever missing an entrant.
+ * Per-media counts are additive ('All' = sum: each comment/post belongs to
+ * exactly one submission, hence one media) and periods are disjoint, so summing
+ * per-period distinct counts gives true totals. The client densifies over
+ * contiguousBuckets (shipped separately as data.periods) — that loop used to
+ * live here; it moved client-side with the media filter.
  */
 export function topIndicatorsOverTime(
 	o: IndicatorOpts & { granularity?: string; topN?: number; dedupeByPost?: boolean } = {}
@@ -513,48 +555,40 @@ export function topIndicatorsOverTime(
 	const raw = sqlite
 		.prepare(
 			`SELECT ${period} AS period, ` +
-				`${CANONICAL_SQL} AS indicator, ${cnt} AS count ` +
-				`FROM comment_indicators ci JOIN comments c ON ci.comment_id = c.id ${CANONICAL_JOIN} ${w.sql} ` +
-				`GROUP BY period, ${CANONICAL_SQL}`
+				`${CANONICAL_SQL} AS indicator, ${MEDIA_SQL} AS media, ${cnt} AS count ` +
+				`FROM comment_indicators ci JOIN comments c ON ci.comment_id = c.id ${MEDIA_JOIN} ${CANONICAL_JOIN} ${w.sql} ` +
+				`GROUP BY period, ${CANONICAL_SQL}, media`
 		)
-		.all(...w.params) as { period: string; indicator: string; count: number }[];
+		.all(...w.params) as { period: string; indicator: string; media: string; count: number }[];
 
-	// Overall top-N by total distinct comments (periods are disjoint, so summing
-	// per-period distinct counts gives the true total per cue).
-	const totals = new Map<string, number>();
-	for (const r of raw) totals.set(r.indicator, (totals.get(r.indicator) ?? 0) + r.count);
-	const indicators = [...totals.entries()]
-		.sort((a, b) => b[1] - a[1])
-		.slice(0, topN)
-		.map((e) => e[0]);
-	const keep = new Set(indicators);
-
-	// Densify over the shared contiguous axis (fixed start, no gaps) so the top
-	// chart aligns with the other over-time charts.
-	const periods = contiguousBuckets(o.granularity ?? 'month');
-	const have = new Map<string, Map<string, number>>();
+	// Union of per-facet top-N: totals per indicator for 'All' and per media.
+	const totals = new Map<string, Map<string, number>>(); // facet -> indicator -> total
+	const add = (facet: string, ind: string, n: number) => {
+		const m = totals.get(facet) ?? new Map<string, number>();
+		m.set(ind, (m.get(ind) ?? 0) + n);
+		totals.set(facet, m);
+	};
 	for (const r of raw) {
-		if (!keep.has(r.indicator)) continue;
-		const m = have.get(r.period) ?? new Map<string, number>();
-		m.set(r.indicator, r.count);
-		have.set(r.period, m);
+		add('', r.indicator, r.count); // '' = All
+		add(r.media, r.indicator, r.count);
 	}
-	const series: { period: string; indicator: string; count: number }[] = [];
-	for (const p of periods)
-		for (const ind of indicators)
-			series.push({ period: p, indicator: ind, count: have.get(p)?.get(ind) ?? 0 });
-	return { series, indicators, periods };
+	const keep = new Set<string>();
+	for (const m of totals.values())
+		for (const [ind] of [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, topN))
+			keep.add(ind);
+
+	return { rows: raw.filter((r) => keep.has(r.indicator)) };
 }
 
 export function indicatorsBySubreddit(o: IndicatorOpts = {}) {
 	const w = indicatorWhere(o);
 	return sqlite
 		.prepare(
-			`SELECT COALESCE(ci.category, 'Uncategorized') AS category, c.subreddit, COUNT(*) AS count ` +
-				`FROM comment_indicators ci JOIN comments c ON ci.comment_id = c.id ${w.sql} ` +
-				`GROUP BY ci.category, c.subreddit ORDER BY ci.category, c.subreddit`
+			`SELECT COALESCE(ci.category, 'Uncategorized') AS category, c.subreddit, ${MEDIA_SQL} AS media, COUNT(*) AS count ` +
+				`FROM comment_indicators ci JOIN comments c ON ci.comment_id = c.id ${MEDIA_JOIN} ${w.sql} ` +
+				`GROUP BY ci.category, c.subreddit, media ORDER BY ci.category, c.subreddit, media`
 		)
-		.all(...w.params) as { category: string; subreddit: string; count: number }[];
+		.all(...w.params) as { category: string; subreddit: string; media: string; count: number }[];
 }
 
 export function indicatorSourceCounts(o: IndicatorOpts = {}) {
@@ -583,6 +617,44 @@ export function topIndicators(o: IndicatorOpts & { limit?: number } = {}) {
 				`GROUP BY ${CANONICAL_SQL} ORDER BY count DESC LIMIT ?`
 		)
 		.all(...w.params, o.limit ?? 50) as { indicator: string; category: string; count: number }[];
+}
+
+/**
+ * Media-dimensioned variant of topIndicators for the filterable table: one row
+ * per (canonical, media), restricted to the UNION of each facet's top-`limit`
+ * (All + video/image/text/other) so the client can re-rank for any media
+ * selection without missing an entrant. 'All' = sum across media — exact,
+ * because each comment belongs to exactly one submission/media. topIndicators
+ * itself stays untouched (headlineStats depends on its shape).
+ */
+export function topIndicatorsByMedia(o: IndicatorOpts & { limit?: number } = {}) {
+	const w = indicatorWhere(o);
+	const limit = o.limit ?? 50;
+	const raw = sqlite
+		.prepare(
+			`SELECT ${CANONICAL_SQL} AS indicator, COALESCE(MAX(ci.category), 'Uncategorized') AS category, ` +
+				`${MEDIA_SQL} AS media, COUNT(DISTINCT ci.comment_id) AS count ` +
+				`FROM comment_indicators ci JOIN comments c ON ci.comment_id = c.id ${MEDIA_JOIN} ${CANONICAL_JOIN} ${w.sql} ` +
+				`GROUP BY ${CANONICAL_SQL}, media`
+		)
+		.all(...w.params) as { indicator: string; category: string; media: string; count: number }[];
+
+	const totals = new Map<string, Map<string, number>>(); // facet -> indicator -> count
+	const add = (facet: string, ind: string, n: number) => {
+		const m = totals.get(facet) ?? new Map<string, number>();
+		m.set(ind, (m.get(ind) ?? 0) + n);
+		totals.set(facet, m);
+	};
+	for (const r of raw) {
+		add('', r.indicator, r.count);
+		add(r.media, r.indicator, r.count);
+	}
+	const keep = new Set<string>();
+	for (const m of totals.values())
+		for (const [ind] of [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit))
+			keep.add(ind);
+
+	return raw.filter((r) => keep.has(r.indicator));
 }
 
 export function indicatorCategories(): string[] {

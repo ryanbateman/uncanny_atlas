@@ -18,9 +18,9 @@ self-contained snapshot that is safe to serve publicly:
      ``UPDATE submissions SET author/title/selftext/permalink/url = NULL``
      (permalink and url embed the slugified title, so they go too).
      Every chart aggregates over created_utc / subreddit / link_id / score /
-     is_video / is_self / flair + the comment_indicators join, so nothing visible
-     changes; the public site shows no per-comment or per-post text anyway
-     (read-only mode);
+     media_type / flair + the comment_indicators join — the web reads the
+     classified media_type column, never url — so nothing visible changes; the
+     public site shows no per-comment or per-post text anyway (read-only mode);
   4. ``VACUUM`` again to reclaim the freed pages.
 
 Run it offline; never commit the output. Serve it with ISTHISAI_READONLY=1.
@@ -86,6 +86,9 @@ def build(source: Path, output: Path, force: bool) -> None:
         # people who asked to be removed. Tombstones are only consulted at insert
         # time in the canonical DB; the deploy DB takes no inserts.
         dst.execute("DROP TABLE IF EXISTS purge_tombstones")
+        # Raw-phrase embeddings (~47 MB) serve only the local Curate -> Emerging
+        # recompute, which the readonly deploy can never run (POST-guarded).
+        dst.execute("DROP TABLE IF EXISTS phrase_embeddings")
 
         print("[3/4] Nulling comments.body/author + submissions text columns ...")
         dst.execute("UPDATE comments SET body = NULL, author = NULL")
@@ -114,6 +117,11 @@ def build(source: Path, output: Path, force: bool) -> None:
         leaked_tombstones = dst.execute(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='purge_tombstones'"
         ).fetchone()[0]
+        # The web charts read submissions.media_type (never url, which is NULLed
+        # above) — an unmigrated source would ship a deploy DB with broken charts.
+        unclassified = dst.execute(
+            "SELECT COUNT(*) FROM submissions WHERE media_type IS NULL"
+        ).fetchone()[0]
         comments = dst.execute("SELECT COUNT(*) FROM comments").fetchone()[0]
         indicators = dst.execute("SELECT COUNT(*) FROM comment_indicators").fetchone()[0]
     finally:
@@ -125,6 +133,11 @@ def build(source: Path, output: Path, force: bool) -> None:
         sys.exit(f"ERROR: {leaked_subs} submission rows still carry text/identity columns — aborting.")
     if leaked_tombstones:
         sys.exit("ERROR: purge_tombstones (the takedown registry) survived into the deploy DB — aborting.")
+    if unclassified:
+        sys.exit(
+            f"ERROR: {unclassified} submissions have no media_type — source DB not migrated "
+            "to v10; run any isthisai-* command first."
+        )
 
     print()
     print("Done. Aggregate-only deploy DB written.")

@@ -9,6 +9,8 @@ from isthisai.db import (
     insert_comments,
     insert_submissions,
     migrate_to_v2,
+    migrate_to_v9,
+    migrate_to_v10,
     set_metadata,
 )
 
@@ -18,6 +20,8 @@ EXPECTED_TABLES = {
     "labels",
     "subscriber_counts",
     "_isthisai_metadata",
+    "purge_tombstones",
+    "phrase_embeddings",
 }
 
 EXPECTED_INDEXES = {
@@ -77,7 +81,7 @@ class TestSchema:
 
     def test_schema_version_metadata(self, tmp_db: sqlite3.Connection) -> None:
         version = get_metadata(tmp_db, "schema_version")
-        assert version == "8"
+        assert version == "10"
 
     def test_creates_db_directory(self, tmp_path) -> None:
 
@@ -224,3 +228,96 @@ class TestMigrationV2:
         migrate_to_v2(tmp_db)
         version = get_metadata(tmp_db, "schema_version")
         assert version == "2"
+
+
+class TestMigrationV9:
+    def test_phrase_embeddings_table_exists(self, tmp_db: sqlite3.Connection) -> None:
+        row = tmp_db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='phrase_embeddings'"
+        ).fetchone()
+        assert row is not None
+
+    def test_phrase_embeddings_is_strict(self, tmp_db: sqlite3.Connection) -> None:
+        # STRICT tables reject type mismatches: a TEXT value in the BLOB column.
+        with pytest.raises(sqlite3.IntegrityError):
+            tmp_db.execute(
+                "INSERT INTO phrase_embeddings (phrase, embedding, model) VALUES (?, ?, ?)",
+                ("weird hands", "not a blob", "test-model"),
+            )
+
+    def test_migration_idempotent(self, tmp_db: sqlite3.Connection) -> None:
+        migrate_to_v9(tmp_db)
+        migrate_to_v9(tmp_db)
+        assert get_metadata(tmp_db, "schema_version") == "9"
+
+
+class TestMigrationV10:
+    def test_media_type_column_exists(self, tmp_db: sqlite3.Connection) -> None:
+        cols = [row[1] for row in tmp_db.execute("PRAGMA table_info(submissions)")]
+        assert "media_type" in cols
+        assert cols.count("media_type") == 1
+
+    def test_migration_idempotent(self, tmp_db: sqlite3.Connection) -> None:
+        migrate_to_v10(tmp_db)
+        migrate_to_v10(tmp_db)
+        cols = [row[1] for row in tmp_db.execute("PRAGMA table_info(submissions)")]
+        assert cols.count("media_type") == 1
+        assert get_metadata(tmp_db, "schema_version") == "10"
+
+    def test_backfill_classifies_each_type(self, tmp_db: sqlite3.Connection) -> None:
+        # Simulate pre-v10 rows: insert with media_type NULLed, then backfill.
+        rows = [
+            ("m1", 0, 0, "https://i.redd.it/a.jpg", "image"),
+            ("m2", 0, 0, "https://v.redd.it/b", "video"),
+            ("m3", 0, 1, "https://reddit.com/r/x/comments/m3/", "text"),
+            ("m4", 0, 0, "https://example.com/article", "other"),
+        ]
+        for sid, iv, isf, url, _ in rows:
+            tmp_db.execute(
+                "INSERT INTO submissions (id, created_utc, is_video, is_self, url, media_type) "
+                "VALUES (?, 1.0, ?, ?, ?, NULL)",
+                (sid, iv, isf, url),
+            )
+        tmp_db.commit()
+        migrate_to_v10(tmp_db)
+        for sid, _, _, _, expected in rows:
+            got = tmp_db.execute(
+                "SELECT media_type FROM submissions WHERE id = ?", (sid,)
+            ).fetchone()[0]
+            assert got == expected, f"{sid}: {got} != {expected}"
+
+
+class TestInsertSubmissionsMediaType:
+    def test_insert_computes_media_type(self, tmp_db: sqlite3.Connection) -> None:
+        insert_submissions(
+            tmp_db,
+            [
+                {"id": "g1", "created_utc": 1.0, "is_video": 0, "is_self": 0,
+                 "url": "https://www.reddit.com/gallery/g1"},
+                {"id": "s1", "created_utc": 1.0, "is_video": 0, "is_self": 1,
+                 "url": "https://www.reddit.com/r/x/comments/s1/"},
+                {"id": "v1", "created_utc": 1.0, "is_video": 0, "is_self": 0,
+                 "url": "https://v.redd.it/v1"},
+            ],
+        )
+        got = dict(
+            tmp_db.execute(
+                "SELECT id, media_type FROM submissions WHERE id IN ('g1','s1','v1')"
+            ).fetchall()
+        )
+        assert got == {"g1": "image", "s1": "text", "v1": "video"}
+
+
+class TestEnrichReclassify:
+    def test_post_types_updates_stale_values(self, tmp_db: sqlite3.Connection) -> None:
+        from isthisai.enrich import reclassify_post_types
+
+        tmp_db.execute(
+            "INSERT INTO submissions (id, created_utc, is_video, is_self, url, media_type) "
+            "VALUES ('r1', 1.0, 0, 0, 'https://v.redd.it/r1', 'other')"
+        )
+        tmp_db.commit()
+        changed = reclassify_post_types(tmp_db)
+        assert changed == 1
+        got = tmp_db.execute("SELECT media_type FROM submissions WHERE id='r1'").fetchone()[0]
+        assert got == "video"

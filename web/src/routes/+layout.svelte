@@ -23,7 +23,8 @@
 	];
 	const curate = [
 		{ href: '/curate/indicators', label: 'Categorise / seeds' },
-		{ href: '/curate/merge', label: 'Merge / canonical' }
+		{ href: '/curate/merge', label: 'Merge / canonical' },
+		{ href: '/curate/emerge', label: 'Emerging' }
 	];
 
 	// Read-only public edition: rather than hide the write/comment views, show them
@@ -126,6 +127,12 @@
 			<a href="/">About</a>
 			<a href={REPO_URL}>GitHub</a>
 			<a href={`${REPO_URL}/blob/main/LICENSE`}>MIT License</a>
+			{#if data.snapshot?.date}
+				<span class="sep">·</span>
+				<span class="snapshot" title="Latest activity in the dataset — quote numbers against this date.">
+					Data to {data.snapshot.date} · {data.snapshot.comments.toLocaleString('en-US')} comments
+				</span>
+			{/if}
 		</footer>
 	</main>
 </div>

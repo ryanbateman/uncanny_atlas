@@ -51,7 +51,9 @@ export const load: PageServerLoad = ({ url, setHeaders, locals }) => {
 			topOverTime,
 			bySubreddit: q.indicatorsBySubreddit(withNoise),
 			sources: q.indicatorSourceCounts(clean),
-			top: q.topIndicators({ ...clean, limit: 40 }),
+			// Media-dimensioned rows (union of per-facet top-40s); the client
+			// re-ranks for the selected media filter and slices the top 40.
+			top: q.topIndicatorsByMedia({ ...clean, limit: 40 }),
 			// canonical -> member phrases, for the "N merged" badge on the top table + legend.
 			mergeGroups: Object.fromEntries(
 				q.mergeGroups().map((g) => [g.canonical, g.members] as [string, string[]])

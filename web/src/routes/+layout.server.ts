@@ -1,5 +1,6 @@
 import type { LayoutServerLoad } from './$types';
 import { dev } from '$app/environment';
+import { dataAsOf } from '$lib/server/queries';
 
 /**
  * Prerender the whole site only for the static public target (BUILD_TARGET=static).
@@ -15,5 +16,7 @@ export const prerender = process.env.BUILD_TARGET === 'static';
  * read-only toggle is rendered only in development.
  */
 export const load: LayoutServerLoad = ({ locals }) => {
-	return { readonly: locals.readonly, dev };
+	// snapshot: stamped into the footer so every page (and anyone quoting a
+	// number) can anchor it to a data date. Cheap (two indexed lookups + COUNT).
+	return { readonly: locals.readonly, dev, snapshot: dataAsOf() };
 };

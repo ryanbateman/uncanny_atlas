@@ -2,6 +2,8 @@
 	import Plot from '$lib/Plot.svelte';
 	import Figure from '$lib/Figure.svelte';
 	import Hint from '$lib/Hint.svelte';
+	import MediaSelect from '$lib/MediaSelect.svelte';
+	import { MEDIA_ORDER } from '$lib/media';
 	import { n } from '$lib/format';
 	import {
 		CHART_STYLE,
@@ -27,6 +29,11 @@
 	let comMode = $state<SeriesMode>('stacked');
 	// Defaults to 100% stacked: the point of this chart is the composition shift.
 	let typeMode = $state<SeriesMode>('percent');
+	// Per-chart media filters ('' = All). The composition charts get NO filter:
+	// they ARE the media view, and filtering a composition by its own dimension
+	// collapses it to one series (a flat band under the 100% stack).
+	let subMedia = $state('');
+	let comMedia = $state('');
 
 	const toDate = (iso: string) => new Date(iso + 'T00:00:00Z');
 
@@ -67,9 +74,16 @@
 
 	// Aggregate day-level rows up to the granularity, then densify (0-fill every
 	// bucket × subreddit) over the contiguous axis. Each row carries a real Date.
-	function series(dayRows: { period: string; subreddit: string; count: number }[], gran: string) {
+	// `media` filters rows BEFORE aggregation; '' (All) just sums the media
+	// dimension away — exact, since each post/comment has exactly one media type.
+	function series(
+		dayRows: { period: string; subreddit: string; media: string; count: number }[],
+		gran: string,
+		media = ''
+	) {
 		const agg = new Map<string, number>();
 		for (const r of dayRows) {
+			if (media && r.media !== media) continue;
 			const k = bucketStart(toDate(r.period), gran) + '|' + r.subreddit;
 			agg.set(k, (agg.get(k) ?? 0) + r.count);
 		}
@@ -80,26 +94,30 @@
 		return dense;
 	}
 
-	const subData = $derived(series(data.submissionsOverTime, subGran));
-	const comData = $derived(series(data.commentsOverTime, comGran));
+	const subData = $derived(series(data.submissionsOverTime, subGran, subMedia));
+	const comData = $derived(series(data.commentsOverTime, comGran, comMedia));
 
-	// Submission-type series: same densify as `series`, keyed by type instead of
-	// subreddit. Types come from the data (link / text / video), stably sorted.
-	const types = $derived([...new Set(data.typesOverTime.map((r) => r.type))].sort());
-	const typeColor = $derived({ domain: types, range: SET2.slice(0, types.length), legend: false });
-	function typeSeries(dayRows: { period: string; type: string; count: number }[], gran: string) {
+	// Media-composition series: same densify as `series`, keyed by media type.
+	// MEDIA_ORDER keeps series/legend order stable (largest-first in the corpus).
+	const types = $derived(MEDIA_ORDER.filter((m) => data.typesOverTime.some((r) => r.media === m)));
+	const typeColor = $derived({
+		domain: [...types],
+		range: SET2.slice(0, types.length),
+		legend: false
+	});
+	function mediaSeries(dayRows: { period: string; media: string; count: number }[], gran: string) {
 		const agg = new Map<string, number>();
 		for (const r of dayRows) {
-			const k = bucketStart(toDate(r.period), gran) + '|' + r.type;
+			const k = bucketStart(toDate(r.period), gran) + '|' + r.media;
 			agg.set(k, (agg.get(k) ?? 0) + r.count);
 		}
-		const dense: { period: string; date: Date; type: string; count: number }[] = [];
+		const dense: { period: string; date: Date; media: string; count: number }[] = [];
 		for (const p of bucketList(gran))
 			for (const t of types)
-				dense.push({ period: p, date: toDate(p), type: t, count: agg.get(p + '|' + t) ?? 0 });
+				dense.push({ period: p, date: toDate(p), media: t, count: agg.get(p + '|' + t) ?? 0 });
 		return dense;
 	}
-	const typeData = $derived(typeSeries(data.typesOverTime, typeGran));
+	const typeData = $derived(mediaSeries(data.typesOverTime, typeGran));
 	// UTC domain for the x-scale, and event markers placed at their exact date.
 	const xDomain = $derived(
 		data.domain ? [toDate(data.domain.min), toDate(data.domain.max)] : undefined
@@ -128,10 +146,11 @@
 
 <Figure
 	title="Submissions over time"
-	hint="New submissions per time bucket, by subreddit. Pick the bucket size and line vs stacked area in the header."
+	hint="New submissions per time bucket, by subreddit. Filter by the medium of the post (video/image/text/other); pick the bucket size and line vs stacked area in the header."
 	caption="Submissions per time bucket, split by subreddit. Dotted red lines mark notable AI image and video releases; labels below the axis mark the first submission and first comment collected."
 >
 	{#snippet controls()}
+		<MediaSelect bind:value={subMedia} />
 		<select bind:value={subGran} class="chart-mode" aria-label="Granularity">
 			<option value="day">Day</option>
 			<option value="week">Week</option>
@@ -173,10 +192,11 @@
 
 <Figure
 	title="Comments over time"
-	hint="New comments per time bucket, by subreddit. Pick the bucket size and line vs stacked area in the header."
+	hint="New comments per time bucket, by subreddit. Filter by the medium of the post the comments belong to; pick the bucket size and line vs stacked area in the header."
 	caption="Comments per time bucket, split by subreddit, on the same timeline as submissions. Labels below the axis mark the first submission and first comment collected."
 >
 	{#snippet controls()}
+		<MediaSelect bind:value={comMedia} />
 		<select bind:value={comGran} class="chart-mode" aria-label="Granularity">
 			<option value="day">Day</option>
 			<option value="week">Week</option>
@@ -218,8 +238,8 @@
 
 <Figure
 	title="Submission type over time"
-	hint="Each type's share of submissions per time bucket (100% stacked). 'Link' is predominantly image posts (external links), 'video' is Reddit-hosted video, 'text' is a self-post. Switch to stacked area or line for absolute counts."
-	caption="Submission types per time bucket. The rising share of video is the corpus-composition shift that can confound indicator trends (e.g. motion/video tells tracking the medium, not detection). Dotted red lines mark notable AI releases."
+	hint="Each media type's share of submissions per time bucket (100% stacked). Posts are classified video / image / text / other from Reddit's flags plus the link's host and file extension — so externally-hosted video (YouTube etc.) counts as video, and galleries count as image. Switch to stacked area or line for absolute counts."
+	caption="Media types per time bucket. The rising share of video is the corpus-composition shift that can confound indicator trends (e.g. motion/video tells tracking the medium, not detection). Dotted red lines mark notable AI releases."
 >
 	{#snippet controls()}
 		<select bind:value={typeGran} class="chart-mode" aria-label="Granularity">
@@ -247,7 +267,7 @@
 				color: typeColor,
 				marks: [
 					...timeGrid(P, typeGran),
-					seriesMark(P, typeData, { x: 'date', y: 'count', series: 'type', mode: typeMode }),
+					seriesMark(P, typeData, { x: 'date', y: 'count', series: 'media', mode: typeMode }),
 					...spines(P),
 					...timeTicks(P, typeGran),
 					...eventMarks(P, markerData)
@@ -263,8 +283,8 @@
 
 <Figure
 	title="Submission type"
-	hint="Posts split into video, text (self-post), or link, based on Reddit's is_video / is_self flags."
-	caption="How posts break down by media type, from Reddit's is_video / is_self flags."
+	hint="Posts classified video / image / text / other from Reddit's flags plus the link's host and file extension (galleries count as image)."
+	caption="How posts break down by media type — the formal classification every media filter on this site uses."
 >
 	<Plot
 		render={(P, { width }) =>
@@ -276,7 +296,7 @@
 				x: { grid: true, label: 'count' },
 				y: { label: null },
 				marks: [
-					P.barX(data.types, { x: 'count', y: 'type', sort: { y: '-x' }, fill: BAR_TEAL, tip: true }),
+					P.barX(data.types, { x: 'count', y: 'media', sort: { y: '-x' }, fill: BAR_TEAL, tip: true }),
 					...spines(P)
 				]
 			})}

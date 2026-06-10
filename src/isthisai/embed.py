@@ -442,8 +442,13 @@ def ground_indicators(
 
         warmup_ollama(model=model, base_url=base_url)
 
-    # Embed every distinct cue phrase (in-memory; not persisted to keep the
-    # taxonomy-only indicator_embeddings table clean).
+    # Embed every distinct cue phrase and persist to phrase_embeddings — kept
+    # separate from the taxonomy-only indicator_embeddings (the seed set semantic
+    # expansion runs from) so the web app's Curate -> Emerging clustering can use
+    # raw-phrase vectors without re-embedding. Committed per batch (mirrors
+    # embed_indicators) so a crash loses at most one batch. Persisting in
+    # --dry-run too is deliberate: an embedding is a pure function of the phrase
+    # text, not a curation decision.
     phrase_vec: dict[str, np.ndarray] = {}
     for i in range(0, len(phrases), EMBEDDING_BATCH_SIZE):
         batch = phrases[i : i + EMBEDDING_BATCH_SIZE]
@@ -454,6 +459,12 @@ def ground_indicators(
             continue
         for p, e in zip(batch, embs):
             phrase_vec[p] = np.asarray(e, dtype=np.float32)
+            conn.execute(
+                "INSERT OR REPLACE INTO phrase_embeddings (phrase, embedding, model) "
+                "VALUES (?, ?, ?)",
+                (p, pack_embedding(e), model),
+            )
+        conn.commit()
         print(f"  embedded {min(i + EMBEDDING_BATCH_SIZE, len(phrases))}/{len(phrases)} phrases", end="\r")
     print()
 
@@ -547,6 +558,14 @@ def categorize_indicators(
             continue
         for phrase, embed in zip(batch, embeds):
             all_embeds[phrase] = embed
+            # Persist for reuse (Curate -> Emerging clusters these without
+            # re-embedding); separate table from the taxonomy-only seed set.
+            conn.execute(
+                "INSERT OR REPLACE INTO phrase_embeddings (phrase, embedding, model) "
+                "VALUES (?, ?, ?)",
+                (phrase, pack_embedding(embed), model),
+            )
+        conn.commit()
         print(f"  Embedded batch {batch_num}/{total_batches}", end="\r")
 
     print()
@@ -565,7 +584,7 @@ def categorize_indicators(
     best_sims = sim_matrix[np.arange(len(query_phrases)), best_indices]
 
     categorised_count = 0
-    noise_count = 0
+    below_threshold = 0
 
     for i, phrase in enumerate(query_phrases):
         best_sim = float(best_sims[i])
@@ -579,12 +598,12 @@ def categorize_indicators(
             )
             categorised_count += 1
         else:
-            conn.execute(
-                "UPDATE comment_indicators SET category = 'Noise' "
-                "WHERE indicator = ? AND category IS NULL",
-                (phrase,),
-            )
-            noise_count += 1
+            # Below-threshold phrases are NOT auto-Noised: distance from every
+            # existing seed is exactly the signature of an EMERGING tell the
+            # taxonomy hasn't met yet — these are the raw material the Curate ->
+            # Emerging view clusters. They stay uncategorised; a human decides.
+            # ('Noise' means a curator judged a phrase a non-cue, nothing else.)
+            below_threshold += 1
 
         if (i + 1) % 500 == 0 or i == len(query_phrases) - 1:
             print(
@@ -601,7 +620,8 @@ def categorize_indicators(
     total = conn.execute("SELECT COUNT(*) FROM comment_indicators").fetchone()[0]
     print(
         f"Categorisation complete: {categorised_count:,} assigned to categories, "
-        f"{noise_count:,} marked as Noise."
+        f"{below_threshold:,} left uncategorised (below threshold {threshold}; "
+        f"see Curate -> Emerging)."
     )
     print(f"  Still uncategorised: {still_uncategorised:,}/{total:,}")
 

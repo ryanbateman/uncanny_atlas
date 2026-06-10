@@ -190,6 +190,7 @@ cd web && npm install && npm run dev   # http://localhost:5173
 | `isthisai-embed indicators` | Embed taxonomy indicator patterns |
 | `isthisai-embed comments [--all]` | Embed comments (resumable); `--all` embeds the whole corpus for max semantic coverage |
 | `isthisai-embed ground [--dry-run] [--threshold 0.45]` | Remove LLM cues not supported by their comment (anti-hallucination) |
+| `isthisai-embed categorize` | Auto-assign uncategorised phrases to the nearest seed's category; below-threshold phrases stay uncategorised (curate them in Curate → Emerging) |
 | `isthisai-embed semantic --threshold 0.7` | Run semantic expansion with custom similarity threshold |
 | `isthisai-embed status` | Show embedding coverage and source counts |
 
@@ -198,6 +199,15 @@ cd web && npm install && npm run dev   # http://localhost:5173
 | Command | Description |
 |---|---|
 | `cd web && npm run dev` | Launch the Explore + Curate web app (http://localhost:5173) |
+
+### Enrichment & Maintenance
+
+| Command | Description |
+|---|---|
+| `isthisai-enrich post-types` | (Re)classify `submissions.media_type` (video/image/text/other) from the rules in `src/isthisai/media.py` — run after changing the host/extension lists; the schema migration classifies everything once automatically |
+| `isthisai-purge comment <id> [--yes]` | Takedown: permanently delete a comment + its indicator rows/embeddings, and tombstone it so re-collection can never re-import it (dry-run without `--yes`) |
+| `isthisai-purge submission <id> [--yes]` | Takedown: delete a submission and every comment under it (tombstoned) |
+| `isthisai-purge author <username> [--yes]` | Takedown: delete an author's comments + submissions (case-insensitive; survives `[deleted]` re-imports) |
 
 ## Environment Variables
 

@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Any
 
 from isthisai.config import DB_PATH, DEFAULT_SUBREDDIT
+from isthisai.media import classify_media_type
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS submissions (
@@ -20,7 +21,8 @@ CREATE TABLE IF NOT EXISTS submissions (
     selftext TEXT,
     permalink TEXT,
     retrieved_utc REAL,
-    subreddit TEXT NOT NULL DEFAULT 'isthisAI'
+    subreddit TEXT NOT NULL DEFAULT 'isthisAI',
+    media_type TEXT
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS comments (
@@ -99,6 +101,10 @@ def migrate(conn: sqlite3.Connection) -> None:
         migrate_to_v7(conn)
     if version is None or int(version) < 8:
         migrate_to_v8(conn)
+    if version is None or int(version) < 9:
+        migrate_to_v9(conn)
+    if version is None or int(version) < 10:
+        migrate_to_v10(conn)
 
 
 def migrate_to_v2(conn: sqlite3.Connection) -> None:
@@ -242,6 +248,42 @@ def migrate_to_v8(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def migrate_to_v9(conn: sqlite3.Connection) -> None:
+    # Raw-cue-phrase embeddings. indicator_embeddings is deliberately taxonomy-only
+    # (it is the seed set semantic expansion runs from), so grounding/categorisation
+    # used to embed the ~15k raw LLM phrases in-memory every run and throw them
+    # away. Persisting them in their own table makes them reusable — the web app's
+    # Curate -> Emerging clustering — without polluting the seed table.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS phrase_embeddings ("
+        "phrase TEXT PRIMARY KEY, "
+        "embedding BLOB NOT NULL, "
+        "model TEXT NOT NULL"
+        ") STRICT"
+    )
+    conn.execute("UPDATE _isthisai_metadata SET value = '9' WHERE key = 'schema_version'")
+    conn.commit()
+
+
+def migrate_to_v10(conn: sqlite3.Connection) -> None:
+    # Formal media-type classification (video|image|text|other) for every
+    # submission. Backfilled by running classify_media_type — the same function
+    # insert_submissions uses — rather than a duplicated SQL CASE, so the
+    # migration and the insert path can never drift apart. Re-running is safe:
+    # it recomputes the same values. (Rule changes without a version bump:
+    # `isthisai-enrich post-types` re-classifies in place.)
+    cur = conn.execute("PRAGMA table_info(submissions)")
+    if "media_type" not in [row[1] for row in cur.fetchall()]:
+        conn.execute("ALTER TABLE submissions ADD COLUMN media_type TEXT")
+    rows = conn.execute("SELECT id, is_video, is_self, url FROM submissions").fetchall()
+    conn.executemany(
+        "UPDATE submissions SET media_type = ? WHERE id = ?",
+        [(classify_media_type(iv, isf, url), sid) for sid, iv, isf, url in rows],
+    )
+    conn.execute("UPDATE _isthisai_metadata SET value = '10' WHERE key = 'schema_version'")
+    conn.commit()
+
+
 def _tombstones(conn: sqlite3.Connection, kind: str) -> set[str]:
     try:
         rows = conn.execute("SELECT id FROM purge_tombstones WHERE kind = ?", (kind,)).fetchall()
@@ -284,6 +326,7 @@ def insert_submissions(
         "permalink",
         "retrieved_utc",
         "subreddit",
+        "media_type",
     ]
     placeholders = ", ".join(["?"] * len(columns))
     sql = f"INSERT OR IGNORE INTO submissions ({', '.join(columns)}) VALUES ({placeholders})"
@@ -317,6 +360,7 @@ def insert_submissions(
                 item.get("permalink"),
                 item.get("retrieved_utc", now),
                 subreddit,
+                classify_media_type(item.get("is_video"), item.get("is_self"), item.get("url")),
             )
         )
 

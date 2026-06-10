@@ -21,7 +21,9 @@ export const submissions = sqliteTable('submissions', {
 	selftext: text('selftext'),
 	permalink: text('permalink'),
 	retrievedUtc: real('retrieved_utc'),
-	subreddit: text('subreddit').notNull().default('isthisAI')
+	subreddit: text('subreddit').notNull().default('isthisAI'),
+	// Formal media classification (video|image|text|other) — src/isthisai/media.py
+	mediaType: text('media_type')
 });
 
 export const comments = sqliteTable('comments', {
