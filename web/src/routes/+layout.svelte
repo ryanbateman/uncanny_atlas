@@ -73,7 +73,7 @@
 		</div>
 
 		<div class="sidebar-body">
-			<div class="tagline">how people spot AI images</div>
+			<div class="tagline">How people spot AI</div>
 
 			<!-- Navigating dismisses the mobile drawer (see afterNavigate below). -->
 			<nav class="nav">
